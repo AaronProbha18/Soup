@@ -6,6 +6,26 @@ on:
   pull_request:
     branches: [main]
 
+# Supersede, do not queue.
+#
+# Measured 2026-09-14: 49 of 83 queued runs were already obsolete -- a newer run
+# existed on the same branch -- because no workflow declared a concurrency group,
+# so every push left its predecessor queued forever. Arrival was 8.3 runs/hour
+# against a service rate of 4.6, i.e. the queue diverged rather than backed up.
+#
+# Cancellation is deliberately PULL-REQUEST ONLY. A push to `main` keeps its own
+# run: the release checklist requires a green matrix on the exact commit being
+# tagged, and cancelling an in-flight tag run to serve a later docs push would
+# destroy the one signal that gate depends on.
+#
+# What this costs: per-commit CI history WITHIN a pull request. Three pushes in
+# a row now leave results for the third only. That is a signal the review rule
+# already discards -- merge requires green on the CURRENT head -- which is why
+# it is the right thing to trade.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   lint:
     runs-on: ubuntu-latest
