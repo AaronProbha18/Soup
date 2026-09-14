@@ -1112,6 +1112,10 @@ soup reward stress reward.py --references golds.jsonl --output-report stress.jso
 # probe a builtin verifier instead of a .py file
 soup reward stress verifiable --verifiable-domain math --references golds.jsonl
 
+# JSON-schema references may be stored as objects in a `schema` field
+soup reward stress verifiable --verifiable-domain json_schema \
+    --references schemas.jsonl --field schema
+
 # tune the attack set / accept threshold / gameability tolerance
 soup reward stress reward.py --references golds.jsonl \
     --attacks empty,length,repetition,sentinel --sentinel GOLD \
@@ -1121,6 +1125,15 @@ soup reward stress reward.py --references golds.jsonl \
 The report shows a per-attack accept-rate and an overall verdict. A gold-requiring verifier probed
 with **no** `--references` is a hard error (it can't be measured), never a false "robust". Probing a
 `.py` executes its module code, like any custom reward — only stress files you trust.
+For the builtin `json_schema` domain, references are forwarded as `schema=` metadata; JSON objects
+selected by `--field` are decoded before the verifier scores them.
+
+Current limitation: the four built-in attack families emit plain text that is not valid JSON, so
+`json_schema` rejects them during parsing before schema-specific constraints are evaluated. The
+result therefore does not yet distinguish a strict schema from a permissive one; structure-
+preserving JSON attacks are tracked in #918. Its `reference_accept` value is also not a meaningful
+self-acceptance control for this domain because it scores the schema document as though it were an
+instance of itself (and is normally `0%`).
 
 ### Verifiable Rewards (RLVR)
 
