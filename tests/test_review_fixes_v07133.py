@@ -493,9 +493,9 @@ class TestAsrInferMetricGuard:
 
 class TestAsrSkipControlStrip:
     def test_hostile_filename_is_stripped(self, tmp_path, monkeypatch):
-        import soup_cli.commands.infer as infer
         from rich.console import Console
 
+        import soup_cli.commands.infer as infer
         from soup_cli.cli import app as cli_app
 
         monkeypatch.chdir(tmp_path)

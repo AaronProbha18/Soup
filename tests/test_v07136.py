@@ -2136,11 +2136,10 @@ class TestDataCanaryCli:
         """
         from pathlib import Path
 
+        from rich.console import Console
         from typer.testing import CliRunner
 
         from soup_cli.cli import app
-        from rich.console import Console
-
         from soup_cli.commands import data_canary as cmd
 
         monkeypatch.chdir(tmp_path)
