@@ -143,7 +143,7 @@ training:
 
 RoPE scaling is applied before model construction for the Transformers text paths of `task: sft` and `task: pretrain`. Vision, audio, layer-streaming and Unsloth setup paths do not consume these fields, nor do other training tasks. Existing type-independent model parameters such as `rope_theta` are preserved; tunables belonging to a previous RoPE algorithm are removed when the type changes. Models such as Gemma 3 that use nested per-layer RoPE sections are refused rather than partially modified. `longrope` additionally requires a checkpoint that already ships its learned `short_factor` and `long_factor` vectors; Soup refuses to invent those model-specific values.
 
-**LongLoRA S² (schema-only this release).** `training.use_longlora: true` requires `task=sft`, `backend=transformers`, a base in the architecture allowlist (Llama / CodeLlama / Mistral / Qwen / Phi — Mixtral excluded), and `use_ring_attention=false`. The schema also rejects the combo with FlashAttention v3 installed (the S² custom-mask kernel conflicts with FA-v3 native custom-mask). The schema gate fails fast at config load; live forward override mirroring LlamaFactory `model/model_utils/longlora.py` lands in a follow-up release.
+**LongLoRA S².** `training.use_longlora: true` requires `task=sft`, `backend=transformers`, a base in the architecture allowlist (Llama / CodeLlama / Mistral / Mixtral / Qwen / Phi), and `use_ring_attention=false`. The schema also rejects the combo with FlashAttention v3 installed (the S² custom-mask kernel conflicts with FA-v3 native custom-mask). During SFT setup, Soup installs the shifted-sparse attention forward override on matching attention modules.
 
 ```yaml
 # Llama 3.1 with NTK-aware scaling out to 128k
