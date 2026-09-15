@@ -67,6 +67,18 @@ def _nondefault_unwired_training_settings(training_config) -> list[str]:
     return enabled_flags + changed_tunables
 
 
+def _format_training_complete_loss(result: dict) -> str:
+    """Render only a loss comparison that the trainer actually measured."""
+    summary_kind = result.get("loss_summary_kind")
+    if summary_kind == "unavailable":
+        return "Loss: [bold]unavailable[/]"
+    if summary_kind in {"mean", "single"} or (
+        summary_kind is None and result["initial_loss"] == result["final_loss"]
+    ):
+        return f"Loss: [bold]{result['final_loss']:.4f}[/]"
+    return f"Loss: [bold]{result['initial_loss']:.4f} -> {result['final_loss']:.4f}[/]"
+
+
 def _build_hardware_fit_input(cfg):
     """Best-effort ``HardwareFitInput`` from a ``SoupConfig``.
 
@@ -1666,7 +1678,7 @@ def train(
     # Report
     console.print(
         Panel(
-            f"Loss: [bold]{result['initial_loss']:.4f} -> {result['final_loss']:.4f}[/]\n"
+            f"{_format_training_complete_loss(result)}\n"
             f"Duration: [bold]{result['duration']}[/]\n"
             f"Output: [bold]{result['output_dir']}[/]\n"
             f"Run ID: [bold]{run_id}[/]\n\n"
