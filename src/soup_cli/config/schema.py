@@ -9,8 +9,11 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 # runtime validator's message can never disagree (layer_stream has no torch).
 from soup_cli.utils.layer_stream import (
     DEFAULT_STREAM_BUFFERS,
+    DEFAULT_STREAM_READ_AHEAD,
     MAX_STREAM_BUFFERS,
+    MAX_STREAM_READ_AHEAD,
     MIN_STREAM_BUFFERS,
+    MIN_STREAM_READ_AHEAD,
 )
 from soup_cli.utils.layer_stream import (
     ROLLOUT_STREAM_TASKS as _STREAM_ROLLOUT_TASKS,
@@ -3203,24 +3206,61 @@ class TrainingConfig(BaseModel):
             raise ValueError("training.stream_buffers must be an int, not bool")
         return v
 
+    # #971 — depth of the async disk-tier reader's background lookahead. NOT
+    # the same quantity as stream_buffers (VRAM buffers): this is HOST-side
+    # pinned-memory staging ahead of the disk read. One staging slot is always
+    # held by the layer currently being consumed, so a setting of N stages
+    # N-1 layers ahead of it, not N — measured across settings 1/2/4/8 giving
+    # 0/1/3/7 layers staged ahead, on both forward and backward passes. A
+    # description that promised N layers of lookahead from a setting of N
+    # would repeat the exact defect #748 exists to catch: a documented number
+    # that does not do what it says.
+    stream_read_ahead: int = Field(
+        default=DEFAULT_STREAM_READ_AHEAD,
+        ge=MIN_STREAM_READ_AHEAD,
+        le=MAX_STREAM_READ_AHEAD,
+        description=(
+            "Layers the async disk tier stages ahead on its background "
+            "thread. One staging slot is always held by the layer currently "
+            "being consumed, so a setting of N stages N-1 layers ahead, not "
+            "N: 1 = the read merely leaves the compute thread (nothing "
+            "staged ahead of the one in use), 2 = one layer in flight while "
+            "one is consumed, up to "
+            f"{MAX_STREAM_READ_AHEAD - 1} staged ahead at the maximum "
+            f"setting of {MAX_STREAM_READ_AHEAD}. Each level costs one layer "
+            "of pinned host memory, which is 441 MB on a 70B."
+        ),
+    )
+
+    @field_validator("stream_read_ahead", mode="before")
+    @classmethod
+    def _validate_stream_read_ahead_int(cls, v: Any) -> Any:
+        """Reject bool-as-int (bool subclasses int), mirrors stream_buffers."""
+        if isinstance(v, bool):
+            raise ValueError("training.stream_read_ahead must be an int, not bool")
+        return v
+
     stream_pin: Optional[bool] = Field(
         default=None,
         description=(
-            "Force the page-locked (pinned) RAM store on or off. None (the "
-            "default) lets the box decide: it attempts a pinned store and falls "
-            "back to a pageable one — announcing the cost — when the host cannot "
-            "page-lock it. 'false' forces the pageable store, the only known "
-            "escape hatch when a pinning path is suspect (it was the sole "
-            "mitigation while #331 was live). 'true' forces the pinned store and "
-            "REFUSES the run on the RAM tier, naming the store size, if the box "
-            "cannot page-lock it, rather than silently degrading — page-locking "
-            "is worth up to 6.56x measured throughput, so a silent fallback "
-            "spends the whole margin the feature exists to provide. On the disk "
-            "tier (the base does not fit in RAM, so there is no RAM store to "
-            "page-lock) and on non-CUDA targets (CPU or MPS) pinning is "
-            "INAPPLICABLE rather than unsatisfiable: 'true' is announced and the "
-            "run proceeds with a pageable CPU source, so the key stays committable "
-            "to a config shared between CUDA and non-CUDA boxes."
+            "Force the page-locked (pinned) host memory on or off — the RAM "
+            "tier's base store, or the disk tier's async-reader host staging "
+            "(#971). None (the default) lets the box decide: it attempts to "
+            "page-lock that memory and falls back to pageable — announcing "
+            "the cost — when the host cannot page-lock it. 'false' forces "
+            "the pageable store, the only known escape hatch when a pinning "
+            "path is suspect (it was the sole mitigation while #331 was "
+            "live). 'true' forces pinning and REFUSES the run rather than "
+            "silently degrading if the box cannot page-lock it: on the RAM "
+            "tier naming the store size, on the disk tier naming "
+            "training.stream_read_ahead as the depth that decides how much "
+            "staging gets locked — page-locking is worth up to 6.56x "
+            "measured throughput, so a silent fallback spends the whole "
+            "margin the feature exists to provide. Non-CUDA targets (CPU or "
+            "MPS) are the one case pinning stays INAPPLICABLE: 'true' is "
+            "announced there and the run proceeds with a pageable CPU "
+            "source, so the key stays committable to a config shared "
+            "between CUDA and non-CUDA boxes."
         ),
     )
 
@@ -5205,6 +5245,7 @@ class SoupConfig(BaseModel):
                 tcfg.stream_source != "auto"
                 or tcfg.stream_ngram_source != "auto"
                 or tcfg.stream_buffers != 2
+                or tcfg.stream_read_ahead != DEFAULT_STREAM_READ_AHEAD
                 or tcfg.stream_vram_override is not None
                 or tcfg.stream_vram_probe
                 or tcfg.stream_disk_kind is not None
@@ -5212,13 +5253,32 @@ class SoupConfig(BaseModel):
             ):
                 raise ValueError(
                     "training.stream_source / training.stream_ngram_source / "
-                    "training.stream_buffers / "
+                    "training.stream_buffers / training.stream_read_ahead / "
                     "training.stream_vram_override / training.stream_vram_probe "
                     "/ training.stream_disk_kind / training.stream_pin set but "
                     "stream_layers is false; set stream_layers=true to stream the "
                     "base layer-by-layer."
                 )
             return self
+        # #971 — `stream_source: 'ram'` INSISTS on the RAM tier: 'ram' insists,
+        # 'disk' forces, 'auto' falls back (trainer/stream_setup.py). The
+        # read-ahead reader belongs to the NVMe disk tier, so a non-default
+        # depth beside 'ram' is a setting that validates, is documented, and
+        # reaches nothing — the class of defect #748 exists to catch, and the
+        # one this very field was caught by. The DEFAULT is accepted, because a
+        # default is not a decision: refusing it would make `stream_source: ram`
+        # unusable with every config that never mentions the depth.
+        if (
+            tcfg.stream_source == "ram"
+            and tcfg.stream_read_ahead != DEFAULT_STREAM_READ_AHEAD
+        ):
+            raise ValueError(
+                f"training.stream_read_ahead={tcfg.stream_read_ahead} has no "
+                "effect with training.stream_source='ram': the read-ahead reader "
+                "belongs to the NVMe disk tier, and 'ram' never falls back to "
+                "it. Set stream_source='auto' or 'disk', or drop "
+                "stream_read_ahead."
+            )
         # v0.72.4 — the four preference losses join SFT. DPO and KTO take their
         # reference from the SAME streamed base with adapters disabled (TRL's
         # `null_ref_context`), so the reference costs no extra weights: measured
