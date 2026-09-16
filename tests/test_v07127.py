@@ -1727,6 +1727,9 @@ class TestDoctorCli:
         result = runner.invoke(app, ["data", "doctor", str(data_path), "--model", "fake/model"])
         assert "\x1b" not in result.output
         assert "\x07" not in result.output
+        # Paired visibility: the payload must be *stripped*, not swallowed --
+        # a sanitiser that dropped the whole field would pass the two above.
+        assert "]0;PWNED" in result.output
 
     def test_empty_model_value_is_friendly_error(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

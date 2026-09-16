@@ -323,7 +323,7 @@ class TestNumericsStalenessGate:
         # Pin tty detection so this asserts the stamp was not echoed, not
         # that the ambient shell happens not to force colour on the panel.
         monkeypatch.setattr(
-            ship_cmd, "console", Console(force_terminal=False, no_color=True)
+            ship_cmd, "console", Console(force_terminal=False)
         )
 
         sha = _config_sha(_CONFIG_MIN)

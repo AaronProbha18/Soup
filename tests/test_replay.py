@@ -160,9 +160,9 @@ class TestCli:
 
         # force_terminal=False pins tty detection; no_color=True alone does not,
         # so under FORCE_COLOR=1 Rich still styles the surrounding panel markup
-        # and the "" assertion below fails on sanitised output.
+        # and the "\x1b" assertion below fails on sanitised output.
         monkeypatch.setattr(
-            runs_command, "console", Console(force_terminal=False, no_color=True)
+            runs_command, "console", Console(force_terminal=False)
         )
 
         tracker = ExperimentTracker()

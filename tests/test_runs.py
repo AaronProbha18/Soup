@@ -137,7 +137,7 @@ def test_runs_show_strips_control_bytes_from_the_error_message(tracker, monkeypa
     # error_message, not that the ambient shell happens not to force colour
     # on the surrounding panel markup.
     monkeypatch.setattr(
-        runs_command, "console", Console(force_terminal=False, no_color=True)
+        runs_command, "console", Console(force_terminal=False)
     )
 
     run_id = tracker.start_run(

@@ -520,6 +520,10 @@ class TestAsrSkipControlStrip:
         # All rows skipped → exit 2 (L2), and no raw ESC reaches the terminal.
         assert result.exit_code == 2
         assert "\x1b" not in result.output
+        # Paired visibility: the ESC-bearing error text must be *stripped*,
+        # not swallowed -- a sanitiser that dropped the whole message would
+        # pass the assertion above. "[31maudio" is the payload minus its ESC.
+        assert "[31maudio" in result.output
 
 
 class TestAsrTaskValidation:

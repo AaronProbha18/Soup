@@ -2168,6 +2168,8 @@ class TestDataCanaryCli:
         assert "\x1b" not in res.output, (
             "a raw ESC byte from the manifest reached the terminal"
         )
+        # Paired visibility: stripped, not swallowed.
+        assert "]52;c;" in res.output
 
     def test_check_missing_manifest(self, tmp_path, monkeypatch):
         from typer.testing import CliRunner
