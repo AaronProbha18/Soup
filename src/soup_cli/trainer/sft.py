@@ -174,7 +174,14 @@ def _validate_pretokenized_targets(dataset: Any, *, split: str, max_length: int)
     )
 
     if "labels" not in getattr(dataset, "column_names", ()):
-        return
+        # #1054: skipping here let a label-less cache through to TRL, whose
+        # collator then falls back to ``labels = input_ids`` and trained on the
+        # prompt. A pre-tokenized cache without labels is never trustworthy.
+        raise ValueError(
+            f"pre_tokenized {split} dataset has no 'labels' column — its loss "
+            "mask is unknown and TRL would train on every token. Re-run "
+            "`soup data preprocess` with a current Soup version."
+        )
     for row_index in range(len(dataset)):
         try:
             ensure_causal_loss_target(
@@ -450,7 +457,7 @@ def _make_vision_trainer(
 
 
 def _maybe_load_pretokenized(
-    dcfg, base: str, console_obj: Console,
+    dcfg, base: str, console_obj: Console, tcfg=None,
 ) -> Optional[Tuple[object, object]]:
     """v0.53.7 #86 — short-circuit tokenization when caller pre-tokenized via
     ``soup data preprocess``.
@@ -475,6 +482,7 @@ def _maybe_load_pretokenized(
         load_pretokenized_dataset,
         make_preprocess_cache_key,
         preprocess_dataset_key_input,
+        preprocess_mask_mode,
     )
 
     tokenized_path = dcfg.tokenized_path
@@ -505,6 +513,7 @@ def _maybe_load_pretokenized(
             # #1067: unlike the format, the template is restated in this config. It
             # has to match, since training saves the tokenizer with this template.
             chat_template=resolve_chat_template(dcfg.chat_template),
+            mask_mode=preprocess_mask_mode(dcfg, tcfg),
         )
         if stored_key != current_key:
             # A cache without the field was written before #1067 keyed on the template.
@@ -823,7 +832,7 @@ class SFTTrainerWrapper(StreamingSetupMixin):
         self._raft_epoch_shuffle = self._is_raft and bool(
             getattr(cfg.data, "raft_epoch_shuffle", False)
         )
-        pretok = _maybe_load_pretokenized(cfg.data, cfg.base, console)
+        pretok = _maybe_load_pretokenized(cfg.data, cfg.base, console, tcfg)
         if pretok is not None:
             train_ds, eval_ds = pretok
             _validate_pretokenized_targets(
