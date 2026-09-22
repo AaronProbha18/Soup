@@ -57,6 +57,25 @@ _ROWS = [
         {"role": "user", "content": "What is the capital of Germany ?"},
         {"role": "assistant", "content": "Berlin ."},
     ],
+    # Multi-turn. A single-turn row has one assistant span and so exactly two
+    # mask boundaries; an off-by-one in the mask transfer survives a per-row
+    # COUNT check on either. These rows have 2N boundaries and are the ones
+    # that pin ``align_labels_to_ids`` -- keep at least one of each here.
+    [
+        {"role": "system", "content": "You are terse ."},
+        {"role": "user", "content": "What is the capital of France ?"},
+        {"role": "assistant", "content": "Paris ."},
+        {"role": "user", "content": "What is the capital of Germany ?"},
+        {"role": "assistant", "content": "Berlin ."},
+    ],
+    [
+        {"role": "user", "content": "What is the capital of France ?"},
+        {"role": "assistant", "content": "Paris ."},
+        {"role": "user", "content": "What is the capital of Germany ?"},
+        {"role": "assistant", "content": "Berlin ."},
+        {"role": "user", "content": "What is the capital of Germany ?"},
+        {"role": "assistant", "content": "Berlin ."},
+    ],
 ]
 
 
@@ -83,6 +102,21 @@ def _tokenizer():
 def _unmasked(labels):
     """Count of positions that contribute to the loss."""
     return sum(1 for label in labels if label != IGNORE_INDEX)
+
+
+def _trained(input_ids, labels):
+    """The token sequence the loss is actually computed over.
+
+    The cached row is 1-2 tokens longer than the live one (the #876 leading BOS,
+    the #791 appended EOS), so label POSITIONS cannot be compared between the two
+    -- but this sequence can: it is offset-invariant, and unlike a count of
+    unmasked positions it does not survive a mask shifted by one, which would
+    train on a prompt token and drop the span's last token while keeping the
+    count identical.
+    """
+    return [
+        token for token, label in zip(input_ids, labels) if label != IGNORE_INDEX
+    ]
 
 
 def _run_preprocess(tmp_path, monkeypatch, tok, *, rows, task="sft", data_extra=""):
@@ -153,13 +187,20 @@ class TestCachedLabels:
         assert len(ds) == len(_ROWS)
         for index, messages in enumerate(_ROWS):
             cached = list(ds[index]["labels"])
-            live = build_assistant_only_labels(messages, tok, max_length=128)["labels"]
+            cached_ids = list(ds[index]["input_ids"])
+            built = build_assistant_only_labels(messages, tok, max_length=128)
+            live = built["labels"]
             assert _unmasked(live) > 0, "sanity: the live path trains on some tokens"
-            assert _unmasked(cached) == _unmasked(live), (
-                f"row {index}: cache trains on {_unmasked(cached)} tokens, "
-                f"live path on {_unmasked(live)}"
+            cached_trained = _trained(cached_ids, cached)
+            live_trained = _trained(built["input_ids"], live)
+            # Sequence, not count: a mask shifted one position keeps the count
+            # exact while training on a prompt token. Multi-turn rows above give
+            # this 2N boundaries to catch that at.
+            assert cached_trained == live_trained, (
+                f"row {index}: cache trains on {tok.decode(cached_trained)!r}, "
+                f"live path on {tok.decode(live_trained)!r}"
             )
-            assert len(cached) == len(ds[index]["input_ids"])
+            assert len(cached) == len(cached_ids)
 
     def test_prompt_tokens_stay_masked(self, tmp_path, monkeypatch):
         """The defect's actual symptom: the prompt was trained on. The unmasked
@@ -364,6 +405,45 @@ class TestCacheKeyCoversMaskMode:
             max_length=128,
         )
         loaded = _maybe_load_pretokenized(dcfg, "x/y", Console())
+        assert loaded is not None
+        train_ds, _ = loaded
+        assert len(train_ds) == 1
+
+    def test_train_on_eot_cache_loads_through_the_pretrain_caller(
+        self, tmp_path, monkeypatch
+    ):
+        """``task: pretrain`` + ``train_on_eot: true`` is a config the schema
+        allows (pretrain is in the sft-family set). ``trainer/pretrain.py`` must
+        derive the same mask mode ``soup data preprocess`` wrote, or the cache is
+        unloadable and re-running preprocess as the error advises regenerates the
+        very same rejected key.
+
+        regression: must fail without the fix -- ``pretrain.py`` called the gate
+        without ``tcfg``, dropping the ``+eot`` suffix on its side only.
+        """
+        from rich.console import Console
+
+        from soup_cli.config.schema import DataConfig
+        from soup_cli.trainer.sft import _maybe_load_pretokenized
+
+        tok = _tokenizer()
+        cache_dir = _run_preprocess(
+            tmp_path,
+            monkeypatch,
+            tok,
+            task="pretrain",
+            rows=[{"text": "You are terse ."}],
+            data_extra="training:\n  train_on_eot: true\n",
+        )
+        dcfg = DataConfig(
+            train="./d.jsonl",
+            format="pre_tokenized",
+            tokenized_path=str(cache_dir.relative_to(tmp_path)),
+            max_length=128,
+        )
+        tcfg = SimpleNamespace(train_on_eot=True)
+        # Exactly what trainer/pretrain.py now passes.
+        loaded = _maybe_load_pretokenized(dcfg, "x/y", Console(), tcfg)
         assert loaded is not None
         train_ds, _ = loaded
         assert len(train_ds) == 1
