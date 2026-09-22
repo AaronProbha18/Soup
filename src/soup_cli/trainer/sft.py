@@ -470,6 +470,7 @@ def _maybe_load_pretokenized(
     if dcfg.format != "pre_tokenized" or not dcfg.tokenized_path:
         return None
 
+    from soup_cli.data.chat_templates import resolve_chat_template
     from soup_cli.utils.data_pipeline import (
         load_pretokenized_dataset,
         make_preprocess_cache_key,
@@ -501,12 +502,21 @@ def _maybe_load_pretokenized(
             tokenizer_name=base,
             max_length=dcfg.max_length,
             format_name=source_format,
+            # #1067: unlike the format, the template is restated in this config. It
+            # has to match, since training saves the tokenizer with this template.
+            chat_template=resolve_chat_template(dcfg.chat_template),
         )
         if stored_key != current_key:
+            # A cache without the field was written before #1067 keyed on the template.
+            predates = (
+                "the cache predates chat_template keying (#1067); "
+                if "chat_template" not in metadata
+                else ""
+            )
             raise ValueError(
                 "pre_tokenized cache hash mismatch: was generated with "
                 f"{stored_key!r}, current config implies {current_key!r}; "
-                "re-run `soup data preprocess`"
+                f"{predates}re-run `soup data preprocess`"
             )
     else:
         console_obj.print(
