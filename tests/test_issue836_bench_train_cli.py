@@ -274,8 +274,8 @@ class TestInferStillAnswersToTheOldForm:
 
 
 class TestDriverAndClockProvenance:
-    """Driver and SM clock come from one nvidia-smi query. No GPU in CI reaches
-    it, so it is driven here with a fake tool."""
+    """Driver and SM clock come from nvidia-smi. No GPU in CI reaches it, so it
+    is driven here with a fake tool."""
 
     @staticmethod
     def _fake_tool(tmp_path, monkeypatch, stdout):
@@ -300,23 +300,17 @@ class TestDriverAndClockProvenance:
         )
         return script
 
-    def test_it_reads_the_driver_and_the_sm_clock(self, tmp_path, monkeypatch):
-        from soup_cli.bench.train_run import _driver_and_sm_clock
+    def test_it_reads_the_driver(self, tmp_path, monkeypatch):
+        from soup_cli.bench.train_run import _driver_version
 
-        script = self._fake_tool(tmp_path, monkeypatch, "580.95.05, 1890\n")
-        assert _driver_and_sm_clock() == ("580.95.05", 1890)
+        script = self._fake_tool(tmp_path, monkeypatch, "580.95.05\n")
+        assert _driver_version() == "580.95.05"
         asked = (tmp_path / (script.name + ".args")).read_text(encoding="utf-8")
-        assert "driver_version" in asked and "clocks.sm" in asked
+        assert "driver_version" in asked
         assert "memory" not in asked  # memory is torch's allocator counters, never this
 
-    def test_unreadable_output_is_none_not_a_guess(self, tmp_path, monkeypatch):
-        from soup_cli.bench.train_run import _driver_and_sm_clock
-
-        self._fake_tool(tmp_path, monkeypatch, "[N/A]\n")
-        assert _driver_and_sm_clock() == (None, None)
-
     def test_no_tool_is_none(self, monkeypatch):
-        from soup_cli.bench.train_run import _driver_and_sm_clock
+        from soup_cli.bench.train_run import _driver_version
 
         monkeypatch.setattr("soup_cli.utils.layer_stream._resolve_tool", lambda *_a: None)
-        assert _driver_and_sm_clock() == (None, None)
+        assert _driver_version() is None

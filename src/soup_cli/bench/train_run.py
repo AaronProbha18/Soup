@@ -48,50 +48,92 @@ def _versions() -> dict:
     return found
 
 
-def _driver_and_sm_clock() -> tuple[Optional[str], Optional[int]]:
-    """``(driver version, current SM clock in MHz)``, or ``None`` for what cannot be read.
+def _nvidia_smi(tool: str, query: str) -> Optional[str]:
+    """First line of one ``nvidia-smi`` query, or ``None`` when it cannot be read.
 
-    The same query ``utils/layer_stream_runtime.sm_clock_mhz`` makes, with the
-    driver added, so a driver update between two reports is visible (#716). Never
-    used for memory: that is torch's allocator counters, which measure a
+    Never used for memory: that is torch's allocator counters, which measure a
     different quantity from nvidia-smi's (#836).
     """
     import subprocess
 
+    try:
+        out = subprocess.run(
+            [tool, query, "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5, check=False,
+        )
+        return out.stdout.splitlines()[0].strip() or None
+    except (OSError, IndexError, subprocess.SubprocessError):
+        return None
+
+
+def _driver_version() -> Optional[str]:
+    """Driver version, so a driver update between two reports is visible (#716)."""
     from soup_cli.utils.layer_stream import _resolve_tool
 
     tool = _resolve_tool("nvidia-smi")  # absolute path only (CWE-427)
-    if tool is None:
-        return None, None
-    try:
-        out = subprocess.run(
-            [tool, "--query-gpu=driver_version,clocks.sm", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=20, check=False,
-        )
-        driver, clock = (part.strip() for part in out.stdout.splitlines()[0].split(","))
-        return driver or None, int(clock)
-    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
-        return None, None
+    return _nvidia_smi(tool, "--query-gpu=driver_version") if tool else None
 
 
-def _device_provenance(torch: Any, device: str) -> dict:
+class ClockSampler:
+    """Samples the SM clock every ``interval`` seconds on a background thread.
+
+    One read after the run lands on an idle card: on the gate-836 box it recorded
+    180-285 MHz against a busy median of 2370-2557 (#1166). Samples are
+    ``(time.perf_counter(), MHz)`` -- the collector's clock -- so they can be cut
+    to the counted window afterwards. The thread only shells out and appends;
+    it never touches torch or CUDA.
+    """
+
+    def __init__(self, interval: float = 0.1) -> None:
+        import threading
+
+        from soup_cli.utils.layer_stream import _resolve_tool
+
+        self.interval = interval
+        self.tool = _resolve_tool("nvidia-smi")  # absolute path only (CWE-427)
+        self.samples: list[tuple[float, int]] = []
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+
+    def _loop(self) -> None:
+        import time
+
+        while True:
+            value = _nvidia_smi(self.tool, "--query-gpu=clocks.sm")
+            if value is not None and value.isdigit():
+                self.samples.append((time.perf_counter(), int(value)))
+            if self._stop.wait(self.interval):
+                return
+
+    def start(self) -> "ClockSampler":
+        if self.tool is not None:
+            self._thread.start()
+        return self
+
+    def stop(self) -> list[tuple[float, int]]:
+        self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout=10)
+        return list(self.samples)
+
+
+def _device_provenance(torch: Any, device: str, sm_clock_mhz_busy: dict) -> dict:
     empty = {
         "device": device, "card": None, "cuda_runtime": None,
-        "compute_capability": None, "driver": None, "sm_clock_mhz_after_run": None,
+        "compute_capability": None, "driver": None, "sm_clock_mhz_busy": sm_clock_mhz_busy,
     }
     if device != "cuda" or not torch.cuda.is_available():
         return empty
     props = torch.cuda.get_device_properties(0)
-    driver, clock = _driver_and_sm_clock()
     return {
         "device": "cuda",
         "card": props.name,
         "cuda_runtime": torch.version.cuda,
         "compute_capability": f"{props.major}.{props.minor}",
-        "driver": driver,
-        # Read after the run: the boost clock moves a lot under load, so this is
-        # the clock the measured steps ended at, not a fixed property of the card.
-        "sm_clock_mhz_after_run": clock,
+        "driver": _driver_version(),
+        # Sampled during the counted steps: the boost clock moves a lot under
+        # load, and the card is idle again by the time training returns.
+        "sm_clock_mhz_busy": sm_clock_mhz_busy,
     }
 
 
@@ -113,7 +155,7 @@ def run_bench_train(
     import torch
 
     from soup_cli.bench.collector import BenchCollector, summarize_trainable
-    from soup_cli.bench.train_report import check_trainable
+    from soup_cli.bench.train_report import check_trainable, summarize_clock_samples
     from soup_cli.trainer.sft import SFTTrainerWrapper
 
     if steps <= warmup:
@@ -137,7 +179,7 @@ def run_bench_train(
         if hasattr(trainer.args, "eval_strategy"):
             trainer.args.eval_strategy = "no"
 
-        collector = BenchCollector()
+        collector = BenchCollector(warmup_steps=warmup)
         if device == "cuda" and torch.cuda.is_available():
             collector._sync = torch.cuda.synchronize
         trainer.add_callback(collector)
@@ -165,7 +207,21 @@ def run_bench_train(
         on_cuda = device == "cuda" and torch.cuda.is_available()
         if on_cuda:
             torch.cuda.reset_peak_memory_stats()
-        trainer.train()
+        sampler = ClockSampler().start() if on_cuda else None
+        try:
+            trainer.train()
+        finally:
+            samples = sampler.stop() if sampler else []
+        if sampler is None:
+            unavailable = "not a CUDA run"
+        elif sampler.tool is None:
+            unavailable = "no nvidia-smi tool found"
+        else:
+            unavailable = None
+        sm_clock_mhz_busy = summarize_clock_samples(
+            samples, collector.counted_window_started, collector.counted_window_ended,
+            unavailable_reason=unavailable,
+        )
         if on_cuda:
             memory = {
                 "max_memory_allocated_bytes": torch.cuda.max_memory_allocated(),
@@ -178,7 +234,7 @@ def run_bench_train(
         resolved.pop("output", None)  # the scratch directory, different every run
         model = trainer.model
         provenance = {
-            **_device_provenance(torch, device),
+            **_device_provenance(torch, device, sm_clock_mhz_busy),
             "platform": platform.platform(),
             "python": platform.python_version(),
             "versions": _versions(),
