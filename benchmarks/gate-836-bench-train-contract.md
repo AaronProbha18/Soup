@@ -476,3 +476,27 @@ The refusals in section 9 reproduce in seconds and need no GPU for (c) and (d).
 
 All 25 JSON reports from this session are committed verbatim under
 [`results/gate-836/`](results/gate-836/), including the contaminated `d3.json`.
+
+## Addendum, 2026-09-23 — the instrument changed after this record (#1166)
+
+Everything above is unchanged and describes the command as it was measured. Three
+of the section 10 observations have since been acted on:
+
+- **10.3:** `provenance.sm_clock_mhz_after_run` is gone. It is replaced by
+  `provenance.sm_clock_mhz_busy`, which gives `min` / `median` / `max` /
+  `sample_count` over `nvidia-smi` samples taken every 100 ms and cut to the
+  counted (post-warm-up) steps, plus `unavailable_reason` when nothing could be
+  sampled. The `sm_clock_mhz_after_run` values in this record (and in the
+  committed `results/gate-836/` JSON) are post-run idle reads. Do not compare them
+  with a later report's `sm_clock_mhz_busy`.
+- **10.4:** `timing.step_seconds` now lists every counted step in run order.
+- **10.2:** `docs/serving-and-export.md` now separates pre-flight refusals, which
+  write no report, from post-run check failures, which write a `valid: false`
+  report. No code changed there, because the behaviour measured in section 9 was
+  already correct.
+
+Timing and token counting are unchanged, so no throughput figure above should
+move. That is a claim about the code, not a measurement. **Follow-up:** re-run
+section 12's commands on the section 1 box to confirm it, and to record
+busy-window clocks for shapes A–D. No GPU was available when this change was
+made.
