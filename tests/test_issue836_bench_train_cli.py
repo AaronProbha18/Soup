@@ -179,7 +179,9 @@ class TestTheCommand:
             app, ["bench", "train", "--config", "soup.yaml", "--steps", "2", "--warmup", "2"],
         )
         assert result.exit_code == 1
-        assert "--warmup" in strip_ansi(result.output)
+        # The pre-flight guard's own text, not the post-run summary's, which
+        # would also fire if the guard were gone.
+        assert "leaves nothing after --warmup" in strip_ansi(result.output)
 
 
 class TestTheConfigHash:
@@ -278,14 +280,15 @@ class TestDriverAndClockProvenance:
     is driven here with a fake tool."""
 
     @staticmethod
-    def _fake_tool(tmp_path, monkeypatch, stdout):
+    def _fake_tool(tmp_path, monkeypatch, stdout, returncode=0):
         import sys
 
         script = tmp_path / "fake_nvidia_smi.py"
         script.write_text(
             "import sys\n"
             "open(sys.argv[0] + '.args', 'w').write(' '.join(sys.argv[1:]))\n"
-            f"sys.stdout.write({stdout!r})\n",
+            f"sys.stdout.write({stdout!r})\n"
+            f"sys.exit({returncode})\n",
             encoding="utf-8",
         )
         windows = sys.platform == "win32"
@@ -308,6 +311,26 @@ class TestDriverAndClockProvenance:
         asked = (tmp_path / (script.name + ".args")).read_text(encoding="utf-8")
         assert "driver_version" in asked
         assert "memory" not in asked  # memory is torch's allocator counters, never this
+
+    @pytest.mark.parametrize(
+        "stdout, returncode",
+        [
+            ("[N/A]\n", 0),
+            (
+                "NVIDIA-SMI has failed because it couldn't communicate with the "
+                "NVIDIA driver. Make sure that the latest NVIDIA driver is installed "
+                "and running.\n",
+                9,
+            ),
+        ],
+    )
+    def test_unreadable_output_is_none_not_a_guess(
+        self, tmp_path, monkeypatch, stdout, returncode
+    ):
+        from soup_cli.bench.train_run import _driver_version
+
+        self._fake_tool(tmp_path, monkeypatch, stdout, returncode)
+        assert _driver_version() is None
 
     def test_no_tool_is_none(self, monkeypatch):
         from soup_cli.bench.train_run import _driver_version

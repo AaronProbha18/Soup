@@ -48,19 +48,23 @@ def _versions() -> dict:
     return found
 
 
-def _nvidia_smi(tool: str, query: str) -> Optional[str]:
+def _nvidia_smi(tool: str, query: str, gpu: Optional[str] = None) -> Optional[str]:
     """First line of one ``nvidia-smi`` query, or ``None`` when it cannot be read.
 
-    Never used for memory: that is torch's allocator counters, which measure a
-    different quantity from nvidia-smi's (#836).
+    A non-zero exit is ``None``: the tool prints its failure on stdout ("NVIDIA-SMI
+    has failed because ..."), and that is not a value. Never used for memory:
+    that is torch's allocator counters, which measure a different quantity from
+    nvidia-smi's (#836).
     """
     import subprocess
 
+    command = [tool, query, "--format=csv,noheader,nounits"]
+    if gpu is not None:
+        command.append(f"--id={gpu}")
     try:
-        out = subprocess.run(
-            [tool, query, "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=5, check=False,
-        )
+        out = subprocess.run(command, capture_output=True, text=True, timeout=5, check=False)
+        if out.returncode != 0:
+            return None
         return out.stdout.splitlines()[0].strip() or None
     except (OSError, IndexError, subprocess.SubprocessError):
         return None
@@ -68,29 +72,57 @@ def _nvidia_smi(tool: str, query: str) -> Optional[str]:
 
 def _driver_version() -> Optional[str]:
     """Driver version, so a driver update between two reports is visible (#716)."""
+    import re
+
     from soup_cli.utils.layer_stream import _resolve_tool
 
     tool = _resolve_tool("nvidia-smi")  # absolute path only (CWE-427)
-    return _nvidia_smi(tool, "--query-gpu=driver_version") if tool else None
+    value = _nvidia_smi(tool, "--query-gpu=driver_version") if tool else None
+    return value if value and re.fullmatch(r"\d+(\.\d+)+", value) else None
+
+
+def _pci_bus_id(props: Any) -> Optional[str]:
+    """torch's device as nvidia-smi names it, since nvidia-smi's GPU 0 need not be
+    torch's ``cuda:0`` (CUDA_VISIBLE_DEVICES, or a different enumeration order)."""
+    try:
+        return (
+            f"{props.pci_domain_id:08X}:{props.pci_bus_id:02X}:"
+            f"{props.pci_device_id:02X}.0"
+        )
+    except (AttributeError, TypeError, ValueError):
+        return None  # older torch: fall back to nvidia-smi's first GPU
 
 
 class ClockSampler:
-    """Samples the SM clock every ``interval`` seconds on a background thread.
+    """Samples the SM clock on a background thread, on ``interval``-second ticks.
 
     One read after the run lands on an idle card: on the gate-836 box it recorded
     180-285 MHz against a busy median of 2370-2557 (#1166). Samples are
-    ``(time.perf_counter(), MHz)`` -- the collector's clock -- so they can be cut
-    to the counted window afterwards. The thread only shells out and appends;
-    it never touches torch or CUDA.
+    ``(time.perf_counter(), MHz)`` -- the collector's clock -- stamped at the
+    midpoint of their query, so they can be cut to the counted window afterwards.
+    A query slower than ``interval`` skips ticks, so real spacing is ``interval``
+    or more. The thread only shells out and appends; it never touches torch or
+    CUDA. ``read`` replaces the nvidia-smi query in tests.
     """
 
-    def __init__(self, interval: float = 0.1) -> None:
+    def __init__(
+        self,
+        interval: float = 0.1,
+        gpu: Optional[str] = None,
+        read: Optional[Callable[[], Optional[str]]] = None,
+    ) -> None:
         import threading
 
         from soup_cli.utils.layer_stream import _resolve_tool
 
         self.interval = interval
-        self.tool = _resolve_tool("nvidia-smi")  # absolute path only (CWE-427)
+        if read is None:
+            tool = _resolve_tool("nvidia-smi")  # absolute path only (CWE-427)
+            if tool is not None:
+                def read():
+                    return _nvidia_smi(tool, "--query-gpu=clocks.sm", gpu)
+        self._read = read
+        self.available = read is not None
         self.samples: list[tuple[float, int]] = []
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, daemon=True)
@@ -98,15 +130,22 @@ class ClockSampler:
     def _loop(self) -> None:
         import time
 
+        origin = time.perf_counter()
+        tick = 0
         while True:
-            value = _nvidia_smi(self.tool, "--query-gpu=clocks.sm")
+            began = time.perf_counter()
+            value = self._read()
+            ended = time.perf_counter()
             if value is not None and value.isdigit():
-                self.samples.append((time.perf_counter(), int(value)))
-            if self._stop.wait(self.interval):
+                self.samples.append(((began + ended) / 2, int(value)))
+            # Absolute ticks: a slow query skips ticks instead of pushing every
+            # later one back by its own duration.
+            tick = max(tick + 1, int((ended - origin) / self.interval) + 1)
+            if self._stop.wait(origin + tick * self.interval - time.perf_counter()):
                 return
 
     def start(self) -> "ClockSampler":
-        if self.tool is not None:
+        if self.available:
             self._thread.start()
         return self
 
@@ -145,12 +184,15 @@ def run_bench_train(
     device: str,
     load_dataset: Callable[[Any], dict],
     before_train: Optional[Callable[[Any], None]] = None,
+    clock_sampler: Optional[Callable[[], Any]] = None,
 ) -> dict:
     """Train ``cfg`` for exactly ``steps`` optimizer steps and build the report.
 
     ``before_train`` receives the wrapper after setup; tests use it to break the
     run on purpose (freeze everything, zero the gradients) so the checks are
     shown to fire through the real trainer and not only on hand-built records.
+    ``clock_sampler`` builds the SM-clock sampler; by default a
+    :class:`ClockSampler` on CUDA and none elsewhere. Tests inject one on CPU.
     """
     import torch
 
@@ -207,14 +249,20 @@ def run_bench_train(
         on_cuda = device == "cuda" and torch.cuda.is_available()
         if on_cuda:
             torch.cuda.reset_peak_memory_stats()
-        sampler = ClockSampler().start() if on_cuda else None
+        if clock_sampler is None and on_cuda:
+            gpu = _pci_bus_id(torch.cuda.get_device_properties(0))
+            sampler = ClockSampler(gpu=gpu)
+        else:
+            sampler = clock_sampler() if clock_sampler is not None else None
+        if sampler is not None:
+            sampler.start()
         try:
             trainer.train()
         finally:
-            samples = sampler.stop() if sampler else []
+            samples = sampler.stop() if sampler is not None else []
         if sampler is None:
             unavailable = "not a CUDA run"
-        elif sampler.tool is None:
+        elif not sampler.available:
             unavailable = "no nvidia-smi tool found"
         else:
             unavailable = None

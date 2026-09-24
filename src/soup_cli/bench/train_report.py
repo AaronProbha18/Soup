@@ -112,8 +112,9 @@ def summarize_clock_samples(
 
     Samples before ``window_start`` (warm-up) or after ``window_end`` (teardown)
     are dropped: the card is ramping there, not doing the measured work. No
-    sample in the window reports ``None`` rather than a number from outside it;
-    ``unavailable_reason`` says when that is because nothing could be sampled.
+    sample in the window reports ``None`` rather than a number from outside it,
+    and ``unavailable_reason`` always says why: the caller's reason (no CUDA, no
+    tool), no readable sample at all, or samples that all fell outside the window.
     """
     clocks = sorted(
         clock
@@ -123,6 +124,12 @@ def summarize_clock_samples(
         and (window_end is None or stamp <= window_end)
     )
     median = None
+    if not clocks and unavailable_reason is None:
+        unavailable_reason = (
+            "no sample fell inside the counted steps"
+            if samples
+            else "nvidia-smi returned no readable SM clock"
+        )
     if clocks:
         middle, odd = divmod(len(clocks), 2)
         median = clocks[middle] if odd else (clocks[middle - 1] + clocks[middle]) / 2
