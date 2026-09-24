@@ -70,7 +70,7 @@ class TestTheClockIsReadWhileBusy:
 
     def test_a_busy_reading_is_not_the_idle_one(self):
         """The old field was the last sample; the gate record measured it at
-        180-285 MHz against a busy median of 2370-2557."""
+        mostly 180 MHz and never above 1417, against a busy median of 2370-2557."""
         idle_after_run = self.SAMPLES[-1][1]
         busy = summarize_clock_samples(self.SAMPLES, 10.0, 20.0)
         assert busy["min"] > idle_after_run * 5
@@ -80,6 +80,8 @@ class TestTheClockIsReadWhileBusy:
         assert (summary["min"], summary["median"], summary["max"]) == (None, None, None)
         assert summary["sample_count"] == 0
         assert summary["unavailable_reason"] == "no sample fell inside the counted steps"
+        # No window start at all is no sample, not a TypeError.
+        assert summarize_clock_samples(self.SAMPLES, None)["sample_count"] == 0
 
     def test_no_readable_sample_says_so(self):
         summary = summarize_clock_samples([], 10.0, 20.0)
@@ -99,37 +101,57 @@ class TestTheClockIsReadWhileBusy:
         # Steps end at 1, 2, 3, 4: warm-up is 0..2, the counted window 2..4.
         assert (collector.counted_window_started, collector.counted_window_ended) == (2.0, 4.0)
 
+    def test_without_warm_up_the_window_opens_at_the_first_step(self):
+        clock = iter(float(i) for i in range(10))
+        collector = BenchCollector(warmup_steps=0)
+        collector._now = lambda: next(clock)
+        for _ in range(2):
+            collector.on_step_begin(None, None, None)
+            collector.on_step_end(None, None, None)
+        assert (collector.counted_window_started, collector.counted_window_ended) == (0.0, 2.0)
+
 
 class TestTheRunCutsSamplesToTheCountedSteps:
-    def test_only_post_warm_up_readings_reach_the_report(self, workdir):
+    def test_the_window_is_exactly_the_counted_steps(self, workdir):
         """The stub reads 1000 + steps finished so far, so every sample says
-        which step it was taken in. Warm-up is steps 0-2: nothing below 1003 may
-        be summarised. Fails if the collector is not told the warm-up, or if the
-        run passes anything but the collector's window."""
+        which step it was taken in. Steps are slowed so each is sampled several
+        times; the report must count exactly the samples from the counted steps.
+        Fails if the warm-up is shifted by one step either way, or if the run
+        passes anything but the collector's window."""
         from soup_cli.bench.train_run import ClockSampler
 
-        seen = {}
+        seen, made = {}, {}
 
-        def grab_the_collector(wrapper):
+        def slow_steps_and_grab_the_collector(wrapper):
             seen["collector"] = next(
                 cb for cb in wrapper.trainer.callback_handler.callbacks
                 if type(cb).__name__ == "BenchCollector"
             )
+            step = wrapper.trainer.training_step
+
+            def slow(*args, **kwargs):
+                time.sleep(0.05)  # releases the GIL: several reads land in every step
+                return step(*args, **kwargs)
+
+            wrapper.trainer.training_step = slow
 
         def read():
             collector = seen.get("collector")
             return str(1000 + len(collector.steps)) if collector else None
 
-        report = _run(
-            lambda: ClockSampler(interval=0.001, read=read),
-            before_train=grab_the_collector,
-        )
+        def factory():
+            made["sampler"] = ClockSampler(interval=0.001, read=read)
+            return made["sampler"]
+
+        report = _run(factory, before_train=slow_steps_and_grab_the_collector)
+        values = [clock for _, clock in made["sampler"].samples]
+        # 1000+k is read during step k+1; steps=6, warmup=3 -> counted steps read 1003..1005.
+        expected = sum(1 for clock in values if 1003 <= clock <= 1005)
         busy = _busy(report)
-        assert busy["sample_count"] > 0 and busy["unavailable_reason"] is None
-        # 1002 is tolerated for the one sample whose read can land between the
-        # third step's end stamp and its append.
-        assert busy["min"] >= 1002 and busy["median"] >= 1003
-        assert busy["max"] <= 1006
+        assert expected >= 6, "guard: every counted step was sampled more than once"
+        # A read can land between a step's end stamp and its append: one per edge.
+        assert abs(busy["sample_count"] - expected) <= 2, (busy, expected)
+        assert busy["unavailable_reason"] is None
 
     def test_no_tool_says_so(self, workdir, monkeypatch):
         from soup_cli.bench.train_run import ClockSampler
@@ -258,7 +280,7 @@ class TestAPreFlightRefusalWritesNoReport:
             cli_tests.app, ["bench", "train", "--config", "soup.yaml", "--steps", "3",
                             "--warmup", "1", "-o", "r.json"],
         )
-        assert result.exit_code == 1
+        assert result.exit_code == 1, result.output
         assert "0 trainable parameter tensors" in strip_ansi(result.output)
         assert not (workdir / "r.json").exists()
 
@@ -267,15 +289,19 @@ class TestAPreFlightRefusalWritesNoReport:
             cli_tests.app, ["bench", "train", "--config", "soup.yaml", "--steps", "2",
                             "--warmup", "2", "-o", "r.json"],
         )
-        assert result.exit_code == 1
+        assert result.exit_code == 1, result.output
         assert "leaves nothing after --warmup" in strip_ansi(result.output)
         assert not (workdir / "r.json").exists()
 
-    def test_a_post_run_failure_does_write_one(self, workdir):
-        """The contrast: a check that fires after training keeps its evidence."""
+    def test_the_control_trains_and_writes_a_report(self, workdir):
+        """The control for the two refusals above: the same command with enough
+        steps trains and writes a report. On CPU its clock says why it is empty."""
+        import json
+
         result = runner.invoke(
             cli_tests.app, ["bench", "train", "--config", "soup.yaml", "--steps", "2",
                             "--warmup", "1", "-o", "r.json"],
         )
-        assert result.exit_code == 0, result.output  # the control for the two above
-        assert (workdir / "r.json").exists()
+        assert result.exit_code == 0, result.output
+        report = json.loads((workdir / "r.json").read_text(encoding="utf-8"))
+        assert _busy(report)["unavailable_reason"] == "not a CUDA run"

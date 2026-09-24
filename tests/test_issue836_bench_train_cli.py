@@ -171,14 +171,14 @@ class TestTheCommand:
         cfg["data"]["format"] = "dpo"
         (workdir / "soup.yaml").write_text(yaml.safe_dump(cfg), encoding="utf-8")
         result = runner.invoke(app, ["bench", "train", "--config", "soup.yaml"])
-        assert result.exit_code == 1
+        assert result.exit_code == 1, result.output
         assert "task: dpo" in strip_ansi(result.output)
 
     def test_warmup_that_eats_every_step_is_refused(self, workdir):
         result = runner.invoke(
             app, ["bench", "train", "--config", "soup.yaml", "--steps", "2", "--warmup", "2"],
         )
-        assert result.exit_code == 1
+        assert result.exit_code == 1, result.output
         # The pre-flight guard's own text, not the post-run summary's, which
         # would also fire if the guard were gone.
         assert "leaves nothing after --warmup" in strip_ansi(result.output)
