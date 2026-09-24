@@ -484,9 +484,10 @@ of the section 10 observations have since been acted on:
 
 - **10.3:** `provenance.sm_clock_mhz_after_run` is gone. It is replaced by
   `provenance.sm_clock_mhz_busy`, which gives `min` / `median` / `max` /
-  `sample_count` over `nvidia-smi` samples taken every 100 ms and cut to the
-  counted (post-warm-up) steps, plus `unavailable_reason` when nothing could be
-  sampled. The `sm_clock_mhz_after_run` values in this record (and in the
+  `sample_count` over `nvidia-smi` samples kept only from the counted
+  (post-warm-up) steps, plus `unavailable_reason` when there are no numbers.
+  Sampling is on a 100 ms schedule, and a slow query skips ticks, so spacing is
+  100 ms or more. Each sample is timestamped at the midpoint of its query. The `sm_clock_mhz_after_run` values in this record (and in the
   committed `results/gate-836/` JSON) are post-run idle reads. Do not compare them
   with a later report's `sm_clock_mhz_busy`.
 - **10.4:** `timing.step_seconds` now lists every counted step in run order.
@@ -495,8 +496,10 @@ of the section 10 observations have since been acted on:
   report. No code changed there, because the behaviour measured in section 9 was
   already correct.
 
-Timing and token counting are unchanged, so no throughput figure above should
-move. That is a claim about the code, not a measurement. **Follow-up:** re-run
-section 12's commands on the section 1 box to confirm it, and to record
-busy-window clocks for shapes A–D. No GPU was available when this change was
-made.
+Timing and token counting are unchanged, but the sampler is new load: while the
+timed steps run, a thread spawns `nvidia-smi` about every 100 ms. Whether any
+throughput figure above moves is therefore open, not settled. **Follow-up:** re-run
+section 12's commands on the section 1 box twice, once with the sampler and once
+without it (for example with a no-op `clock_sampler`). Compare the two against
+this record, and record busy-window clocks for shapes A–D. No GPU was available
+when this change was made.
