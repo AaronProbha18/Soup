@@ -408,6 +408,43 @@ class TestMaskFlagsReachTheCache:
             assert len(live) > len(_trained(no_eot["input_ids"], no_eot["labels"]))
 
 
+_TF_ROW = [
+    {"role": "system", "content": "You are terse .", "train": False},
+    {"role": "user", "content": "What is the capital of France ?", "train": True},
+    {"role": "assistant", "content": "Paris .", "train": False},
+    {"role": "user", "content": "What is the capital of Germany ?"},
+    {"role": "assistant", "content": "Berlin ."},
+]
+
+
+class TestTrainFieldCache:
+    def test_train_field_cache_matches_the_live_path(self, tmp_path, monkeypatch):
+        """The one mode whose mask depends on per-message data: the cache must
+        train exactly what ``build_per_message_train_labels`` trains live.
+
+        regression: must fail if the ``train_field`` branch builds the
+        assistant-only mask or returns ``input_ids`` like ``full``.
+        """
+        from soup_cli.data.loss_mask import (
+            build_assistant_only_labels,
+            build_per_message_train_labels,
+        )
+
+        tok = _tokenizer()
+        ds = _load_cache(_run_preprocess(
+            tmp_path, monkeypatch, tok, rows=[{"messages": _TF_ROW}],
+            data_extra="  train_on_responses_only: false\n"
+                       "  train_on_messages_with_train_field: true\n",
+        ))
+        cached = _trained(list(ds[0]["input_ids"]), list(ds[0]["labels"]))
+        built = build_per_message_train_labels(_TF_ROW, tok, max_length=128)
+        live = _trained(built["input_ids"], built["labels"])
+        assert cached == live
+        other = build_assistant_only_labels(_TF_ROW, tok, max_length=128)
+        assert live != _trained(other["input_ids"], other["labels"]), "guard: modes differ"
+        assert len(live) < len(ds[0]["input_ids"]), "guard: not every token"
+
+
 class TestEveryTrainerPassesTheTrainingConfig:
     """Every caller of the gate must hand it ``training``, or its cache is
     unloadable.
@@ -450,6 +487,8 @@ class TestEveryTrainerPassesTheTrainingConfig:
             f"expected the known call sites, found {sorted(names)} -- if the "
             "helper moved, re-point this sweep rather than deleting it"
         )
+        import ast
+
         for name, node in calls:
             passed = len(node.args) + len(node.keywords)
             assert passed >= 4, (
@@ -457,6 +496,14 @@ class TestEveryTrainerPassesTheTrainingConfig:
                 f"{passed} arguments; it must also forward the training config, "
                 "or a train_on_eot cache built by `soup data preprocess` can "
                 "never be loaded back (#1054)"
+            )
+            # A count alone accepts ``None`` or ``cfg`` in the fourth slot.
+            keywords = {kw.arg: kw.value for kw in node.keywords}
+            fourth = node.args[3] if len(node.args) > 3 else keywords.get("tcfg")
+            assert fourth is not None, f"{name}:{node.lineno} passes no training config"
+            source = ast.unparse(fourth)
+            assert source == "tcfg" or "training" in source, (
+                f"{name}:{node.lineno} forwards {source!r}, not the training config"
             )
 
 
@@ -471,11 +518,68 @@ class TestMissingLabelsIsRefused:
         from soup_cli.trainer.sft import _validate_pretokenized_targets
 
         dataset = SimpleNamespace(column_names=["input_ids", "attention_mask"])
-        with pytest.raises(ValueError, match="no 'labels' column"):
+        with pytest.raises(ValueError, match="no 'labels' column") as exc:
             _validate_pretokenized_targets(dataset, split="train", max_length=128)
+        # An external dataset has no preprocess run to repeat.
+        assert "add a 'labels' column" in str(exc.value)
 
 
 class TestCacheKeyCoversMaskMode:
+    @pytest.mark.parametrize("bad", ["", "responses_only\x00", None])
+    def test_bad_mask_mode_is_rejected(self, bad):
+        from soup_cli.utils.data_pipeline import make_preprocess_cache_key
+
+        with pytest.raises(ValueError, match="mask_mode"):
+            make_preprocess_cache_key(
+                dataset_path="./d.jsonl",
+                tokenizer_name="x/y",
+                max_length=128,
+                format_name="chatml",
+                mask_mode=bad,
+            )
+
+    @pytest.mark.parametrize(
+        ("dropped", "expected", "absent"),
+        [
+            (("mask_mode",), "predates loss-mask keying (#1054)", "#1067"),
+            (
+                ("mask_mode", "chat_template"),
+                "predates chat_template keying (#1067)",
+                "#1054",
+            ),
+        ],
+    )
+    def test_an_older_cache_names_the_gap(
+        self, tmp_path, monkeypatch, dropped, expected, absent
+    ):
+        """A v5-shaped cache (no ``mask_mode`` in metadata, an older key) names
+        #1054; one also missing ``chat_template`` names only the older #1067."""
+        from rich.console import Console
+
+        from soup_cli.config.schema import DataConfig
+        from soup_cli.trainer.sft import _maybe_load_pretokenized
+
+        tok = _tokenizer()
+        cache_dir = _run_preprocess(
+            tmp_path, monkeypatch, tok, rows=[{"messages": _ROWS[0]}]
+        )
+        meta_path = cache_dir / "metadata.json"
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        for field in dropped:
+            meta.pop(field)
+        meta["cache_key"] = "0" * 16  # the older schema hashed other inputs
+        meta_path.write_text(json.dumps(meta), encoding="utf-8")
+        dcfg = DataConfig(
+            train="./d.jsonl",
+            format="pre_tokenized",
+            tokenized_path=str(cache_dir.relative_to(tmp_path)),
+            max_length=128,
+        )
+        with pytest.raises(ValueError, match="cache hash mismatch") as exc:
+            _maybe_load_pretokenized(dcfg, "x/y", Console())
+        assert expected in str(exc.value)
+        assert absent not in str(exc.value)
+
     def test_mask_mode_changes_the_key(self):
         """Acceptance criterion #2, at the hash. Same dataset / tokenizer /
         max_length / format under a different masking config must not collide."""
@@ -666,6 +770,16 @@ class TestSampleCount:
 
         dcfg = SimpleNamespace(format="chatml", tokenized_path=None)
         assert _train_sample_count(dcfg, {"train": [1, 2, 3]}) == 3
+
+    def test_negative_row_count_falls_back(self, tmp_path):
+        """Control: a corrupt ``row_count`` must not print a negative count."""
+        from soup_cli.commands.train import _train_sample_count
+
+        (tmp_path / "metadata.json").write_text(
+            json.dumps({"row_count": -3}), encoding="utf-8"
+        )
+        dcfg = SimpleNamespace(format="pre_tokenized", tokenized_path=str(tmp_path))
+        assert _train_sample_count(dcfg, {"train": [1, 2]}) == 2
 
     def test_unreadable_metadata_falls_back(self, tmp_path):
         """Control: a cache without usable metadata must not crash the launch."""
