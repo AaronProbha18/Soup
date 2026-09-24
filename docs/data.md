@@ -1030,7 +1030,9 @@ would mask it (`data.train_on_responses_only` /
 built under one masking setting is refused — with the same
 `cache hash mismatch` error — when loaded under a different one. Caches written
 before this fix (tokenizer schema `v5` and earlier) have no `labels` and are
-rejected; re-run `soup data preprocess`.
+rejected; re-run `soup data preprocess`. A `pre_tokenized` dataset you built
+yourself must carry its own `labels` column (`-100` on every token not to train
+on); without one it is refused rather than trained on every token.
 
 
 ## Data Recipe DAG Runner (`soup data recipe --execute`)

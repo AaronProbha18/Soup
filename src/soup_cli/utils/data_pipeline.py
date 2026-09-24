@@ -300,6 +300,8 @@ def make_preprocess_cache_key(
         raise ValueError("chat_template must not contain null bytes")
     if not isinstance(mask_mode, str) or not mask_mode:
         raise ValueError("mask_mode must be a non-empty string")
+    if "\x00" in mask_mode:
+        raise ValueError("mask_mode must not contain null bytes")
     # Any new DataConfig field that changes what a preprocessed ROW looks like
     # belongs in this key -- #1067 (chat_template) and #1054 (mask_mode) were
     # both this same gap, found separately. Check the open issues before adding

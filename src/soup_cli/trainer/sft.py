@@ -180,7 +180,8 @@ def _validate_pretokenized_targets(dataset: Any, *, split: str, max_length: int)
         raise ValueError(
             f"pre_tokenized {split} dataset has no 'labels' column — its loss "
             "mask is unknown and TRL would train on every token. Re-run "
-            "`soup data preprocess` with a current Soup version."
+            "`soup data preprocess` with a current Soup version, or add a "
+            "'labels' column to a dataset you built yourself."
         )
     for row_index in range(len(dataset)):
         try:
