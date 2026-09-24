@@ -368,14 +368,16 @@ def align_labels_to_ids(
 ) -> list[int]:
     """Carry a loss mask built on one tokenization over onto another's ids.
 
-    ``soup data preprocess`` is deliberately pinned to ``main``'s tokenization
-    of the rendered template (``add_special_tokens=True`` + the #785 BOS strip
-    + the #791 training EOS), while the masking builders above tokenize through
-    ``_tokenize_only`` (``add_special_tokens=False``). The two therefore differ
-    by a leading BOS and/or a trailing EOS (#876). Rather than re-deriving the
-    mask against the cache's tokenizer call — the drift that produced #1054 in
-    the first place — run the builders as-is and transfer their mask onto the
-    cache's ids by longest-common-subsequence alignment.
+    ``soup data preprocess`` tokenizes the rendered template its own way (#876
+    settled the BOS question; #791 appends the training EOS), while the masking
+    builders above go through ``_tokenize_only``. The two need not agree token
+    for token, and after #876 they still differ by the trailing EOS. Rather than
+    re-deriving the mask against the cache's own tokenizer call — the drift that
+    produced #1054 in the first place — run the builders as-is and transfer
+    their mask onto the cache's ids by longest-common-subsequence alignment.
+
+    This holds whatever the two tokenizations differ by, so it does not need
+    revisiting each time one of them changes.
 
     Positions with no aligned source token stay ``IGNORE_INDEX``.
     """

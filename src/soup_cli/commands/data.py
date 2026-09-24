@@ -2620,8 +2620,8 @@ def preprocess_dataset(
             # ``labels = input_ids`` and the cached run trains on the prompt
             # too, silently diverging from the equivalent live chatml run. Build
             # the mask with the very helpers the live path uses, then align it
-            # onto this path's ids (which stay byte-identical to what #785/#791
-            # pinned — only ``labels`` is new here).
+            # onto this path's ids, which are left exactly as the tokenization
+            # above produced them — only ``labels`` is new here.
             labels = _mask_labels_for_cache_row(
                 messages, tokenizer, mask_mode, max_length, input_ids
             )

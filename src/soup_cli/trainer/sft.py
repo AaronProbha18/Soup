@@ -468,8 +468,9 @@ def _maybe_load_pretokenized(
 
     Cache-hash gate: when ``<tokenized_path>/metadata.json`` exists, its
     ``cache_key`` is cross-checked against the current
-    ``(base, max_length, format, train)`` config via
-    :func:`make_preprocess_cache_key`. Mismatch raises ``ValueError`` with
+    ``(train, base, max_length, format, chat_template, mask_mode)`` config via
+    :func:`make_preprocess_cache_key` — every input that changes what a cached
+    row looks like. Mismatch raises ``ValueError`` with
     the keyword ``"cache hash mismatch"`` so users know to re-run
     ``soup data preprocess``. Missing ``metadata.json`` falls back to
     "trusted" mode with a yellow advisory.
@@ -516,12 +517,16 @@ def _maybe_load_pretokenized(
             mask_mode=preprocess_mask_mode(dcfg, tcfg),
         )
         if stored_key != current_key:
-            # A cache without the field was written before #1067 keyed on the template.
-            predates = (
-                "the cache predates chat_template keying (#1067); "
-                if "chat_template" not in metadata
-                else ""
-            )
+            # A cache without the field was written before that input joined the
+            # key, so name the reason rather than leaving two hashes to compare
+            # by eye. Oldest gap first: a cache missing both predates #1067, and
+            # saying so places it further back than naming #1054 alone would.
+            if "chat_template" not in metadata:
+                predates = "the cache predates chat_template keying (#1067); "
+            elif "mask_mode" not in metadata:
+                predates = "the cache predates loss-mask keying (#1054); "
+            else:
+                predates = ""
             raise ValueError(
                 "pre_tokenized cache hash mismatch: was generated with "
                 f"{stored_key!r}, current config implies {current_key!r}; "

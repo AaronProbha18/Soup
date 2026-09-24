@@ -9,13 +9,19 @@ so the cache reached TRL with no labels and TRL's collator fell back to
 optimised different objectives depending only on whether the data was preprocessed
 first, and nothing raised: the loss curve looks entirely normal.
 
-Because the failure is silent, every assertion here counts the **unmasked**
-(``!= IGNORE_INDEX``) label positions. A present-but-degenerate ``labels`` array
-(all ``-100``, or all unmasked) must fail these tests exactly like a missing one --
-asserting merely that a ``labels`` column exists would pass the bug.
+Because the failure is silent, the assertions here are about which tokens are
+**unmasked** (``!= IGNORE_INDEX``), never about the presence of a ``labels``
+column -- a present-but-degenerate array (all ``-100``, or all unmasked) must
+fail exactly like a missing one. The parity assertions compare the trained token
+SEQUENCE rather than a count, because a mask shifted one position keeps the count
+exact while training on a prompt token.
 
-Three defects, three groups:
-- the cache now carries a loss mask equal to the live path's (``TestCachedLabels``);
+The groups:
+- the cache carries a loss mask equal to the live path's (``TestCachedLabels``);
+- every flag the live builder reads reaches the cache and the key --
+  ``mask_history``, ``train_on_eot`` (``TestMaskFlagsReachTheCache``);
+- every trainer forwards the training config to the gate, or its own cache is
+  unloadable (``TestEveryTrainerPassesTheTrainingConfig``);
 - the mask setting is a cache-key input, so a cache built under one masking config
   is refused by the other (``TestCacheKeyCoversMaskMode``);
 - ``soup train`` reports the cached row count rather than 0 (``TestSampleCount``).
@@ -46,6 +52,16 @@ _EOS_ID = _SPECIALS.index("</s>")
 _TEMPLATE = (
     "{{ bos_token }}"
     "{% for m in messages %}<|{{ m['role'] }}|> {{ m['content'] }} <|end|> {% endfor %}"
+)
+
+# The assistant's EOS sits OUTSIDE ``{% generation %}``, so ``train_on_eot``
+# decides whether it is trained. On ``_TEMPLATE`` the EOS falls inside the span
+# either way, which makes the flag inert and any test built on it vacuous.
+_GEN_TEMPLATE = (
+    "{{ bos_token }}{% for m in messages %}<|{{ m['role'] }}|> "
+    "{% if m['role'] == 'assistant' %}"
+    "{% generation %}{{ m['content'] }}{% endgeneration %} {{ eos_token }} "
+    "{% else %}{{ m['content'] }} <|end|> {% endif %}{% endfor %}"
 )
 
 _ROWS = [
@@ -107,8 +123,8 @@ def _unmasked(labels):
 def _trained(input_ids, labels):
     """The token sequence the loss is actually computed over.
 
-    The cached row is 1-2 tokens longer than the live one (the #876 leading BOS,
-    the #791 appended EOS), so label POSITIONS cannot be compared between the two
+    The cached row and the live one need not be the same length (#791 appends a
+    training EOS to the cached one), so label POSITIONS cannot be compared
     -- but this sequence can: it is offset-invariant, and unlike a count of
     unmasked positions it does not survive a mask shifted by one, which would
     train on a prompt token and drop the span's last token while keeping the
@@ -267,6 +283,181 @@ class TestCachedLabels:
             )
         )
         assert list(ds[0]["labels"]) == list(ds[0]["input_ids"])
+
+
+class TestMaskFlagsReachTheCache:
+    """Every flag the live builder reads has to reach the cache AND the key.
+
+    ``mask_history`` (#761) and ``train_on_eot`` both change which tokens the
+    live path trains on, so a cache that ignores either trains on a different
+    set under a key that claims otherwise -- #1054 exactly, one flag along.
+
+    The default fixture template cannot show this: ``_TEMPLATE`` renders no EOS
+    after the assistant span, so ``include_eot`` is inert on it and a test built
+    there passes whether or not the flag is forwarded. ``_GEN_TEMPLATE`` puts the
+    EOS OUTSIDE ``{% generation %}``, where the flag decides whether it is
+    trained -- measured on the live builder, the four combinations give 4 / 2 /
+    6 / 3 trained tokens, all distinct.
+    """
+
+    def _cached_trained(self, tmp_path, monkeypatch, tok, *, messages, data_extra):
+        ds = _load_cache(
+            _run_preprocess(
+                tmp_path,
+                monkeypatch,
+                tok,
+                rows=[{"messages": messages}],
+                data_extra=data_extra,
+            )
+        )
+        return _trained(list(ds[0]["input_ids"]), list(ds[0]["labels"]))
+
+    def test_mask_history_cache_matches_the_live_path(self, tmp_path, monkeypatch):
+        """(a) ``mask_history: true`` on a multi-turn row: the cache trains the
+        LAST assistant span only, and exactly the tokens the live path trains.
+
+        regression: must fail without the fix -- the cache ignored
+        ``mask_history`` and trained every span.
+        """
+        from soup_cli.data.loss_mask import build_assistant_only_labels
+
+        tok = _tokenizer()
+        messages = _ROWS[2]
+        cached = self._cached_trained(
+            tmp_path, monkeypatch, tok,
+            messages=messages, data_extra="  mask_history: true\n",
+        )
+        built = build_assistant_only_labels(
+            messages, tok, max_length=128, mask_history=True
+        )
+        live = _trained(built["input_ids"], built["labels"])
+        assert live, "sanity: the live path trains on some tokens"
+        assert cached == live, (
+            f"cache trains on {tok.decode(cached)!r}, live path on "
+            f"{tok.decode(live)!r}"
+        )
+        # And it is genuinely narrower than the unmasked-history default, so a
+        # cache that dropped the flag could not pass by coincidence.
+        without = build_assistant_only_labels(messages, tok, max_length=128)
+        assert len(live) < len(_trained(without["input_ids"], without["labels"]))
+
+    def test_mask_history_changes_the_cache_key(self, tmp_path, monkeypatch):
+        """(b) The flag changes the cached row, so it must change the key --
+        otherwise a cache built one way loads silently under the other."""
+        from soup_cli.config.schema import DataConfig
+        from soup_cli.utils.data_pipeline import (
+            make_preprocess_cache_key,
+            preprocess_mask_mode,
+        )
+
+        common = dict(
+            dataset_path="d.jsonl", tokenizer_name="x/y",
+            max_length=128, format_name="chatml",
+        )
+        keys = {
+            make_preprocess_cache_key(
+                **common,
+                mask_mode=preprocess_mask_mode(
+                    DataConfig(train="d.jsonl", mask_history=history),
+                    SimpleNamespace(train_on_eot=eot),
+                ),
+            )
+            for history in (False, True)
+            for eot in (False, True)
+        }
+        assert len(keys) == 4, "each mask-flag combination needs its own key"
+
+    def test_train_on_eot_changes_what_the_cache_trains(self, tmp_path, monkeypatch):
+        """(c) ``train_on_eot`` on a template whose EOS sits outside the
+        assistant span, alone and combined with ``mask_history``.
+
+        The combined case is what kills ``endswith("+eot")``: the mode is then
+        ``responses_only+eot+mask_history``, ``endswith`` is False, and the cache
+        silently drops the EOT while the key says it has it.
+
+        regression: must fail without the fix -- both against ``include_eot``
+        hardcoded off and against ``endswith`` matching.
+        """
+        from soup_cli.data.loss_mask import build_assistant_only_labels
+
+        tok = _tokenizer()
+        tok.chat_template = _GEN_TEMPLATE
+        messages = _ROWS[2]
+        for history in (False, True):
+            data_extra = "  mask_history: true\n" if history else ""
+            cached = self._cached_trained(
+                tmp_path / f"eot-{history}", monkeypatch, tok,
+                messages=messages,
+                data_extra=data_extra + "training:\n  train_on_eot: true\n",
+            )
+            built = build_assistant_only_labels(
+                messages, tok, max_length=128,
+                include_eot=True, mask_history=history,
+            )
+            live = _trained(built["input_ids"], built["labels"])
+            assert cached == live, (
+                f"mask_history={history}: cache trains on {tok.decode(cached)!r}, "
+                f"live path on {tok.decode(live)!r}"
+            )
+            # The EOS must actually be in the trained set, or this asserts
+            # nothing about the flag.
+            assert live[-1] == _EOS_ID, "guard: train_on_eot trains the EOS"
+            no_eot = build_assistant_only_labels(
+                messages, tok, max_length=128, mask_history=history
+            )
+            assert len(live) > len(_trained(no_eot["input_ids"], no_eot["labels"]))
+
+
+class TestEveryTrainerPassesTheTrainingConfig:
+    """Every caller of the gate must hand it ``training``, or its cache is
+    unloadable.
+
+    ``preprocess_mask_mode`` reads ``training.train_on_eot``; a caller that omits
+    it derives a different mode than ``soup data preprocess`` wrote and the cache
+    is refused by a hash that re-running preprocess reproduces exactly -- a loop
+    with no way out. A behavioural test per caller does not scale: it pins the
+    callers that exist when it is written and silently ignores the next trainer
+    to grow a ``pre_tokenized`` path. Read the call sites out of the AST instead,
+    so a new one is covered the day it is added.
+
+    regression: must fail without the fix -- on main ``pretrain.py`` passes three
+    arguments. Dropping ``tcfg`` from EITHER call site fails this.
+    """
+
+    def _gate_calls(self):
+        import ast
+        from pathlib import Path
+
+        import soup_cli.trainer as trainer_pkg
+
+        found = []
+        for path in sorted(Path(trainer_pkg.__file__).parent.glob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "_maybe_load_pretokenized"
+                ):
+                    found.append((path.name, node))
+        return found
+
+    def test_every_call_site_forwards_a_training_config(self):
+        calls = self._gate_calls()
+        # Guard: an empty sweep would pass vacuously if the helper were renamed.
+        names = {name for name, _ in calls}
+        assert {"sft.py", "pretrain.py"} <= names, (
+            f"expected the known call sites, found {sorted(names)} -- if the "
+            "helper moved, re-point this sweep rather than deleting it"
+        )
+        for name, node in calls:
+            passed = len(node.args) + len(node.keywords)
+            assert passed >= 4, (
+                f"{name}:{node.lineno} calls _maybe_load_pretokenized with "
+                f"{passed} arguments; it must also forward the training config, "
+                "or a train_on_eot cache built by `soup data preprocess` can "
+                "never be loaded back (#1054)"
+            )
 
 
 class TestMissingLabelsIsRefused:

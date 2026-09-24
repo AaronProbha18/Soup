@@ -88,7 +88,9 @@ def _train_sample_count(dcfg, dataset) -> int:
     ``load_dataset`` — which sees the ORIGINAL ``data.train`` file and drops
     every row for want of an ``input_ids`` column, printing "0 train samples"
     for a run that then trains on the whole cache. Read the count preprocess
-    recorded instead, falling back to the loader's view if it is unavailable.
+    recorded instead, falling back to the loader's view if it is unavailable or
+    not a plausible count (a negative ``row_count`` is a corrupt or hand-edited
+    metadata.json, and printing "Loaded: -3 train samples" helps nobody).
     """
     rows = len(dataset.get("train", []))
     if dcfg.format != "pre_tokenized" or not dcfg.tokenized_path:
@@ -100,7 +102,8 @@ def _train_sample_count(dcfg, dataset) -> int:
             count = json.load(f).get("row_count")
     except (OSError, ValueError):
         return rows
-    return count if isinstance(count, int) and not isinstance(count, bool) else rows
+    valid = isinstance(count, int) and not isinstance(count, bool) and count >= 0
+    return count if valid else rows
 
 
 def _build_hardware_fit_input(cfg):
