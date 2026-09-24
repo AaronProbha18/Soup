@@ -200,15 +200,20 @@ class TestTheSampler:
         across a window edge."""
         from soup_cli.bench.train_run import ClockSampler
 
-        entered = []
+        inside = []
 
         def slow_read():
-            entered.append(time.perf_counter())
+            entered = time.perf_counter()
             time.sleep(0.1)
+            inside.append((entered, time.perf_counter()))
             return "2505"
 
         (stamp, _), *_ = ClockSampler(interval=1.0, read=slow_read).start().stop()
-        assert 0.02 < stamp - entered[0] < 0.09
+        # Bounded by the read's own entry and exit, not by the sleep's length:
+        # a start stamp lands before ``entered``, an end stamp after ``left``.
+        # (A fixed 90 ms bound failed on a macOS runner whose sleep took 114 ms.)
+        entered, left = inside[0]
+        assert entered < stamp < left
 
     def test_without_a_tool_nothing_starts(self, monkeypatch):
         from soup_cli.bench.train_run import ClockSampler
