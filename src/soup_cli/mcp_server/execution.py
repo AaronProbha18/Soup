@@ -307,7 +307,19 @@ class ExecutionManager:
                 log_path=log_path,
             )
             try:
-                log_handle = open(log_path, "ab")
+                # open_no_follow (#820): a file symlink planted at the run-log
+                # path itself is refused rather than followed, so the child's
+                # output cannot be redirected to the link's target. Mode 0o666
+                # keeps plain open()'s permissions (umask still applies); the
+                # OSError on refusal maps to the path-free ExecutionError below.
+                log_handle = os.fdopen(
+                    open_no_follow(
+                        log_path,
+                        os.O_WRONLY | os.O_CREAT | os.O_APPEND,
+                        0o666,
+                    ),
+                    "ab",
+                )
                 process = subprocess.Popen(  # noqa: S603 - internal argv, no shell
                     list(plan.argv),
                     cwd=plan.cwd,
