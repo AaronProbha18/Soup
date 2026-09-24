@@ -97,11 +97,12 @@ class ClockSampler:
     """Samples the SM clock on a background thread, on ``interval``-second ticks.
 
     One read after the run lands on an idle card: on the gate-836 box it recorded
-    180-285 MHz against a busy median of 2370-2557 (#1166). Samples are
+    mostly 180 MHz and never above 1417, against a busy median of 2370-2557
+    (#1166). Samples are
     ``(time.perf_counter(), MHz)`` -- the collector's clock -- stamped at the
     midpoint of their query, so they can be cut to the counted window afterwards.
-    A query slower than ``interval`` skips ticks, so real spacing is ``interval``
-    or more. The thread only shells out and appends; it never touches torch or
+    Queries start on an ``interval`` schedule; one slower than that skips
+    ticks. The thread only shells out and appends; it never touches torch or
     CUDA. ``read`` replaces the nvidia-smi query in tests.
     """
 

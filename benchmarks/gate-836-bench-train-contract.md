@@ -486,8 +486,9 @@ of the section 10 observations have since been acted on:
   `provenance.sm_clock_mhz_busy`, which gives `min` / `median` / `max` /
   `sample_count` over `nvidia-smi` samples kept only from the counted
   (post-warm-up) steps, plus `unavailable_reason` when there are no numbers.
-  Sampling is on a 100 ms schedule, and a slow query skips ticks, so spacing is
-  100 ms or more. Each sample is timestamped at the midpoint of its query. The `sm_clock_mhz_after_run` values in this record (and in the
+  Queries start on a 100 ms schedule, and a slow query skips ticks. Each
+  sample is timestamped at the midpoint of its query. The
+  `sm_clock_mhz_after_run` values in this record (and in the
   committed `results/gate-836/` JSON) are post-run idle reads. Do not compare them
   with a later report's `sm_clock_mhz_busy`.
 - **10.4:** `timing.step_seconds` now lists every counted step in run order.
