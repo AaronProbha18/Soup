@@ -59,14 +59,17 @@ Every scan is linear in its input, because a completion is untrusted model outpu
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import NamedTuple
 
 __all__ = [
+    "BoxedAnswer",
     "FinalAnswer",
     "answers_match",
     "extract_final_answer",
+    "iter_boxed_answers",
     "normalize_answer",
     "parse_completion",
     "parse_number",
@@ -129,6 +132,19 @@ class FinalAnswer:
 
     text: str
     number: Decimal | None = None
+
+
+@dataclass(frozen=True)
+class BoxedAnswer:
+    """One closed ``\\boxed{...}``: the braces' positions and the normalised content.
+
+    ``end`` is the index just past the closing brace, so a caller can rank a box against other
+    matches by position and read the last committed one.
+    """
+
+    start: int
+    end: int
+    answer: str
 
 
 def _canonical_symbols(text: str) -> str:
@@ -254,29 +270,43 @@ def _marker_answer(text: str) -> tuple[int, _Explicit] | None:
     return start, _Explicit(answer, True, frozenset(), text_follows)
 
 
-def _closing_brace(text: str, start: int, limit: int) -> int | None:
-    depth = 1
-    for match in _BRACE_RE.finditer(text, start, limit):
-        depth += 1 if match.group() == "{" else -1
-        if depth == 0:
-            return match.start()
-    return None
+def iter_boxed_answers(text: str) -> Iterator[BoxedAnswer]:
+    """Yield the innermost ``\\boxed{...}`` answers in ``text``, in the order they close.
+
+    One pass over the braces. A box that holds another box is skipped: its content is the inner
+    box, so it is never itself an answer, and skipping it stops the normalised contents from
+    overlapping, which is what keeps the pass linear. A box that never closes is skipped too,
+    instead of swallowing the rest of the text.
+    """
+    opens = {match.end() - 1: match.start() for match in _BOXED_OPEN_RE.finditer(text)}
+    open_braces: list[int] = []
+    open_boxes: list[int] = []  # the braces of the boxes still open, innermost last
+    holds_a_box: set[int] = set()
+    for match in _BRACE_RE.finditer(text):
+        brace_at = match.start()
+        if match.group() == "{":
+            open_braces.append(brace_at)
+            if brace_at in opens:
+                if open_boxes:
+                    holds_a_box.add(open_boxes[-1])
+                open_boxes.append(brace_at)
+        elif open_braces:
+            brace = open_braces.pop()
+            if brace in opens:
+                open_boxes.pop()
+                if brace not in holds_a_box:
+                    answer = normalize_answer(text[brace + 1 : brace_at])
+                    yield BoxedAnswer(opens[brace], match.end(), answer)
 
 
 def _boxed_answer(text: str) -> tuple[int, str] | None:
     """Return ``(position, answer)`` for the last ``\\boxed{...}`` that closes, if any."""
-    # Walk the boxes from the last one back. When a box never closes, an earlier box can only
-    # close BEFORE that box's brace (it would have to close the later box first), so each scan
-    # stops at the next box's brace and the whole walk is linear.
-    matches = list(_BOXED_OPEN_RE.finditer(text))
-    limit = len(text)
-    for match in reversed(matches):
-        close = _closing_brace(text, match.end(), limit)
-        if close is not None:
-            answer = normalize_answer(text[match.end() : close])
-            return (match.start(), answer) if answer else None
-        limit = match.end() - 1
-    return None
+    last = None
+    for last in iter_boxed_answers(text):
+        pass
+    if last is None or not last.answer:
+        return None
+    return last.start, last.answer
 
 
 def _phrase_answer(text: str) -> tuple[int, _Explicit] | None:
