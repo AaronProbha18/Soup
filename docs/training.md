@@ -1591,8 +1591,9 @@ data:
 training:
   citation_faithful: true        # enable citation precision/recall scoring
   citation_style: bracket        # cite as [doc-1] inline
-  citation_recall_threshold: 0.8 # gate final save on recall >= 80%
 ```
+
+`training.citation_recall_threshold` is validated but nothing gates a save or a run on it. Setting it warns in v0.76 and is refused as of v0.77 (#761).
 
 ```jsonl
 # RAFT JSONL row shape
