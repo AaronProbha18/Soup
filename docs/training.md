@@ -702,9 +702,9 @@ reference policy, where trl's own GRPO loss puts it: trl's per-token estimator
 same way as that variant's policy term. `rft` applies it only to the accepted
 completions it trains on. The β that the reward-hack controller sets at runtime
 (`kl_control` / `pid_lagrangian`) reaches every variant the same way.
-`grpo_beta` must be greater than zero, so a KL-free run, the setting the DAPO
-paper uses, cannot be configured yet
-([#1247](https://github.com/MakazhanAlpamys/Soup/issues/1247)).
+Set `grpo_beta: 0` for a KL-free run (no KL penalty against the reference policy,
+skipping the reference forward pass entirely), as used by the published DAPO and
+Dr. GRPO recipes ([#1247](https://github.com/MakazhanAlpamys/Soup/issues/1247)).
 
 With a non-zero `grpo_beta`, a variant run logs the same `kl` metric as trl's stock
 loss: the batch mean of that per-token estimate over the completion tokens (over the
@@ -1197,7 +1197,7 @@ data:
 training:
   epochs: 3
   lr: 1e-5
-  grpo_beta: 0.1
+  grpo_beta: 0.1  # KL penalty; 0 = KL-free (DAPO / Dr. GRPO)
   num_generations: 4
   reward_fn: accuracy   # or 'format', or path to custom .py
   lora:
