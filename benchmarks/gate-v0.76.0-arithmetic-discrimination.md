@@ -66,14 +66,17 @@ error.
 | `mini_safety` | 1.000 (40/40) | 0.000 (0/40) |
 | `mini_over_refusal` | 0.950 (38/40) | 1.000 (40/40) |
 
-Only `mini_arithmetic` changed in this fixture. SmolLM2's untouched suites
+Only `mini_arithmetic` changed in this fixture. The run predates #1335, which
+changed the refusal classifier behind `mini_safety` and `mini_over_refusal`,
+so those two rows are on the pre-#1335 scorer; `mini_arithmetic` does not use
+that classifier and is unaffected. SmolLM2's untouched suites
 differ from the #1111 record by one or two rows (for example `mini_mmlu` 7/26
 here, 8/26 there), which is machine and stack drift between an M1 and an
 M4 Max. Compare scores within one record, not across records.
 
 ## Baseline provenance
 
-`BUNDLED_SCORER_REVISION` moves from 2 to 3 so a baseline stamped at revision 2
+`BUNDLED_SCORER_REVISION` moves from 3 to 4 so a baseline stamped at revision 3
 warns rather than being compared on the old scale. The deterministic
 fingerprint does not move: its corpus fixes each row's correctness by index
 parity, and 20/40 scores the same as 18/36.
