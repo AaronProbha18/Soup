@@ -317,7 +317,7 @@ MINI_ARITHMETIC: MiniBenchmark = [
     {"question": "What is 16 + 25?", "answer": "41"},
     {"question": "What is 90 divided by 3?", "answer": "30"},
     # #1192 — the 24 single-step rows above put a capable model at 1.000
-    # (Qwen2.5-7B-Instruct, 36/36 in gate-v0.76.0-tool-call-discrimination.md),
+    # (Qwen2.5-7B-Instruct, 36/36 in the #1111 gate record),
     # so the suite could not see a numeracy regression. The rows below are
     # multi-step or large-operand; no answer appears as a token in its own
     # question, so echoing the prompt cannot score.
