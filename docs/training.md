@@ -1321,8 +1321,15 @@ ignoring case and whitespace, `$`, `\(...\)` and `\[...\]`, `\left` / `\right`, 
 `\tfrac` versus `\frac`; so `\boxed{\dfrac{14}{3}}` matches a gold of `\frac{14}{3}`. Both sides
 also drop the trailing punctuation `. , ; : !`, LaTeX thousands separators such as `1{,}000`, the
 LaTeX spacing commands `\,` `\!` `\;` `\:` and `\ `, and a Unicode minus sign. A `\\` row break is
-kept whole, so a matrix matches however its rows are spaced. Units, `^\circ`, `\text{}` and
-`x = ` prefixes are not stripped, and nothing is evaluated (`\frac{1}{2}` does not equal `0.5`).
+kept whole, so a matrix matches however its rows are spaced. One `\text{}` / `\textbf{}` /
+`\mathrm{}` / `\mbox{}` wrapper is unwrapped to its contents, `^\circ` / `^{\circ}` / `°` are
+dropped, a compact `\frac` argument is braced to match whether it is a single bare character or
+an already-braced group, with or without a space before it (`\frac12`, `\frac1{2}`, `\frac{1}2`,
+`\frac 34` and `\frac9{19}` all read `\frac{N}{D}`), and a one-letter variable prefix reads its
+right-hand side (`x = 7` reads `7`, on either side), though when both sides name a variable and
+the names differ (`x = 3` against `y = 3`), the pair scores 0.0, since a directrix or an
+asymptote's variable is part of its answer. Units are still not stripped (`42 apples` against
+`42`), and nothing is evaluated (`\frac{1}{2}` does not equal `0.5`).
 
 For GRPO, Soup preserves source dataset columns and TRL passes them to reward functions as
 keyword arguments. An Alpaca `output` or the final assistant turn in ShareGPT/ChatML is also
