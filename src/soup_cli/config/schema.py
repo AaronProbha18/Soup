@@ -1603,7 +1603,7 @@ class TrainingConfig(BaseModel):
         return value
 
     # v0.50.0 Part A — GRPO objective variants (unsloth + axolotl parity).
-    # Schema-only in v0.50.0; live loss kernels wired in v0.50.1.
+    # The trainer applies the variant losses (trainer/grpo.py).
     grpo_variant: Optional[Literal[
         "standard", "gspo", "dapo", "dr_grpo", "bnpo", "two_sided", "rft"
     ]] = Field(
@@ -1686,7 +1686,7 @@ class TrainingConfig(BaseModel):
 
         return validate_rollout_func(value)
     # v0.50.0 Part D — GRPO stability / efficiency knobs (axolotl + unsloth).
-    # All schema-only in v0.50.0; live trainer callbacks wired in v0.50.1.
+    # The trainer wires these as callbacks (trainer/grpo.py).
     ref_model_ema_alpha: Optional[float] = Field(
         default=None,
         gt=0.0,
@@ -2578,9 +2578,9 @@ class TrainingConfig(BaseModel):
     @field_validator("minillm_pretrain_anchor_path")
     @classmethod
     def _validate_minillm_anchor_path(cls, v):
-        """v0.70.0 Part C — shape-only path validation. Cwd containment
-        deferred to v0.70.1 runtime hook (matches v0.69.0 build_dag /
-        magpie base_model policy).
+        """v0.70.0 Part C — shape-only path validation. Cwd containment is
+        checked when the trainer loads the anchor (``utils/minillm.py``,
+        matching the build_dag / magpie base_model policy).
         """
         if v is None:
             return None
@@ -4216,10 +4216,8 @@ class TrainingConfig(BaseModel):
         return validate_unlearn_alpha(v)
 
     # ---- v0.62.0 Part B — RA-DIT (Retrieval-Augmented Dual Instruction
-    # Tuning, Meta 2023). Schema-only: a YAML can declare ``ra_dit_stage``
-    # so a recipe locks the right pairing; live two-stage orchestration
-    # ships in v0.62.1 (mirrors the v0.50.0 / v0.61.0 stub-then-live
-    # pattern).
+    # Tuning, Meta 2023). A YAML declares ``ra_dit_stage`` so a recipe locks
+    # the right pairing; ``soup ra-dit`` runs the two stages.
     ra_dit_stage: Optional[Literal["retriever", "generator"]] = Field(
         default=None,
         description=(
@@ -5211,10 +5209,8 @@ class SoupConfig(BaseModel):
         transformers/unsloth backends. MLX rejected with distinct message
         (matches v0.34.0 review-fix policy of distinct error reasons).
 
-        Live loss kernels for non-standard variants are deferred to v0.50.1;
-        a yellow advisory at trainer construction time will name the
-        deferred wiring (mirrors v0.40.0 Part D ``NotImplementedError``
-        stub-then-live pattern).
+        The trainer applies the non-standard variant losses
+        (``trainer/grpo.py``).
         """
         if self.training.grpo_variant is None:
             return self
@@ -5259,8 +5255,8 @@ class SoupConfig(BaseModel):
         """v0.50.0 Part E — ``task='prm'`` schema gate.
 
         Delegates to :func:`prm.validate_prm_compat` so the rules are
-        single-source-of-truth. Live PRM trainer wrapper is deferred to
-        v0.50.1.
+        single-source-of-truth. Training runs through
+        ``trainer/prm.py``'s ``PRMTrainerWrapper``.
         """
         if self.task != "prm":
             return self
@@ -5642,8 +5638,8 @@ class SoupConfig(BaseModel):
 
         Mirrors v0.50.0 ``_validate_grpo_stability_task_gate`` policy.
         ``reasoning_effort`` only makes sense on SFT-family training
-        (sft / pretrain / distill / classifier-family) because the live
-        formatter (v0.52.1) will inject a system-prefix token. The other
+        (sft / pretrain / distill / classifier-family) because the SFT
+        formatter injects it as a system-prefix token. The other
         tasks (DPO / GRPO / KTO / ORPO / SimPO / IPO / BCO / preference /
         PPO / reward_model / embedding / prm / tts) do not consume it.
 
@@ -7028,7 +7024,7 @@ class SoupConfig(BaseModel):
         - ``unlearn_method`` is rejected on any other task (silent no-op
           footgun — mirrors v0.52.0 distill / classifier task-gate).
         - ``data.forget_set`` is present when ``task='unlearn'``.
-        - Backend != mlx (live wiring deferred to v0.61.1).
+        - Backend != mlx (there is no MLX unlearning path).
         - ``loraplus_lr_ratio`` is refused (#745): unlearn drives its own
           ``torch.optim.AdamW`` loop, not a ``Trainer``, so there is nothing
           for ``attach_loraplus_optimizer`` to attach to and LoRA+ would be
@@ -7203,8 +7199,8 @@ class SoupConfig(BaseModel):
           RAFT row carries the doc references; other formats can't supply
           ground-truth citation IDs).
         * ``citation_faithful=True`` requires ``task in {sft, pretrain}``
-          (the span-mask runtime that v0.62.1 will ship only makes sense
-          for the SFT family; mirrors v0.52.0 distill / classifier
+          (the span-mask runtime only makes sense for the SFT family;
+          mirrors v0.52.0 distill / classifier
           task-gate policy — review M3 fix).
         * ``citation_style`` set without ``citation_faithful=True`` is a
           silent-no-op footgun — rejected (mirrors v0.61.0 unlearn_alpha /
@@ -7238,8 +7234,8 @@ class SoupConfig(BaseModel):
                 raise ValueError(
                     "training.citation_faithful=true requires "
                     f"task in {{sft, pretrain}}; got task={self.task!r}. "
-                    "Citation-faithful FT is an SFT-family feature; the "
-                    "live span-mask runtime ships in v0.62.1."
+                    "Citation-faithful FT is an SFT-family feature: its "
+                    "span-mask runtime runs in the SFT trainer."
                 )
         return self
 
@@ -7716,8 +7712,8 @@ class SoupConfig(BaseModel):
 # DEPRECATED (v0.39.0 Part E) — these inline templates are kept for back-compat.
 # The canonical source is `soup_cli/templates/*.yaml` with `manifest.json`.
 # Both sources are asserted equal in tests/test_templates_yaml.py — when editing
-# a template, update both. Planned removal: v0.41.0+ once external consumers
-# have migrated to the YAML registry.
+# a template, update both. It is kept until external consumers have migrated
+# to the YAML registry.
 TEMPLATES: dict[str, str] = {
     "chat": """# Soup template: Chat Assistant
 # Fine-tune a model for conversational chat
