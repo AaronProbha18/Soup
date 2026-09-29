@@ -35,18 +35,12 @@ _HW_FIT_OPTIMIZERS = frozenset({
 })
 
 _UNWIRED_TRAINING_TUNABLES = (
-    "forgetting_eval_steps",
+    # Group B tunables (forgetting_eval_steps, forgetting_benchmark, forgetting_stop,
+    # checkpoint_eval_steps, checkpoint_eval_metric, checkpoint_eval_tasks,
+    # checkpoint_keep_top, convergence_window, convergence_rel_tol) moved to
+    # config/staged_fields.py (#808), and early_stop_patience moved in #761:
+    # the loader warns about them with the refusal date, so they are not listed here.
     "forgetting_threshold",
-    "forgetting_benchmark",
-    "forgetting_stop",
-    "checkpoint_eval_steps",
-    "checkpoint_eval_metric",
-    "checkpoint_eval_tasks",
-    "checkpoint_keep_top",
-    # early_stop_patience moved to config/staged_fields.py (#761): the loader
-    # warns about it with the refusal date, so it is not listed here as well.
-    "convergence_window",
-    "convergence_rel_tol",
 )
 
 
@@ -951,9 +945,10 @@ def train(
         cfg.training.eval_gate = EvalGateConfig(enabled=True, suite=gate)
         console.print(f"[green]Eval gate enabled[/] with suite: {gate}")
 
-    # Honesty guard: these staged knobs are accepted but are not enforced
-    # mid-training in this build. Warn for every non-default member of the
-    # families, not only their enable flags, so a tuned no-op is never silent.
+    # Honesty guard: these staged flags (plus forgetting_threshold) are accepted
+    # but not enforced mid-training in this build. Their other tuning knobs are
+    # reported by the loader with refusal dates, so only active flags and
+    # non-default forgetting_threshold are reported here.
     _unwired_gates = _nondefault_unwired_training_settings(cfg.training)
     if _unwired_gates:
         console.print(

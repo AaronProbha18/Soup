@@ -3250,11 +3250,17 @@ class TrainingConfig(BaseModel):
     )
     convergence_window: int = Field(
         default=50, ge=5, le=10_000,
-        description="Number of recent losses to inspect for plateau / oscillation",
+        description=(
+            "Staged, not enforced during training: "
+            "number of recent losses to inspect for plateau / oscillation"
+        ),
     )
     convergence_rel_tol: float = Field(
         default=0.005, gt=0.0, le=1.0,
-        description="Relative range threshold below which the window is a plateau",
+        description=(
+            "Staged, not enforced during training: "
+            "relative range threshold below which the window is a plateau"
+        ),
     )
     # Warmup auto-schedule (v0.32.0 Part D) — reuses pre-existing warmup_ratio.
     warmup_auto: bool = Field(

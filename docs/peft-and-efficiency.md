@@ -670,8 +670,9 @@ training:
 ```
 
 Computes `continue` / `early_stop` / `lower_lr` advice from the loss curve for
-callers that invoke the detector. `soup train` currently reports this option as
-not enforced; a live training callback remains a follow-up.
+callers that invoke the detector. `convergence_detection` is reported as not
+enforced by `soup train`; setting `convergence_window` or `convergence_rel_tol` away from their
+defaults emits a load-time warning in v0.76 and will be refused as of v0.77 (#808).
 
 ### VRAM Pressure Advisory
 
@@ -690,14 +691,15 @@ Records peak memory each step. When pressure crosses the threshold, recommends a
 
 ## Training Intelligence (Forgetting + Checkpoint Quality)
 
-The `forgetting_*`, `checkpoint_*`, `early_stop_on_regression`, and `convergence_*` settings are
+The `forgetting_detection`, `checkpoint_intelligence`, `early_stop_on_regression`, `convergence_detection`, and `forgetting_threshold` settings are
 reserved for planned in-training callbacks. They are accepted by the schema but
 are not enforced during training in this build. `soup train` prints an advisory note
 when one is set away from its default, directing users to `--gate <suite.yaml>`.
-(Other unconsumed configuration fields staged for features that have not landed emit
-a load-time warning in v0.76 and are refused as of v0.77 per #808. That includes
-`early_stop_patience`, which moved from the advisory note to the load-time warning
-in #761, so it is reported once, with the refusal date.)
+Their tuning knobs (`forgetting_eval_steps`, `forgetting_benchmark`, `forgetting_stop`,
+`checkpoint_eval_steps`, `checkpoint_eval_metric`, `checkpoint_eval_tasks`, `checkpoint_keep_top`,
+`convergence_window`, and `convergence_rel_tol`) emit a load-time warning in v0.76
+and are refused as of v0.77 per #808, alongside `early_stop_patience` (#761), so each
+is reported once with the refusal date.
 
 Use the live eval gate for regression detection and automatic stopping today:
 
