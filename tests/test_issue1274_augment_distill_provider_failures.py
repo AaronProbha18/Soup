@@ -254,6 +254,34 @@ def test_augment_failure_summary_is_not_parsed_as_rich_markup(tmp_path, monkeypa
     assert "[/oops]" in _terminal_text(result)
 
 
+def test_augment_partial_failure_warning_is_not_parsed_as_rich_markup(
+    tmp_path, monkeypatch
+) -> None:
+    # The partial-failure path writes the file FIRST and only then prints the warning, so an
+    # unescaped "[/oops]" in the provider's error crashes the command after a successful write.
+    import soup_cli.commands.data as data_mod
+    from soup_cli.utils.data_forge import ProviderCallError
+
+    class FailsOnce:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def generate(self, prompt: str, max_tokens: int = 512) -> str:
+            self.calls += 1
+            if self.calls == 1:
+                raise ProviderCallError("upstream said [/oops]")
+            return "Rewritten text."
+
+    monkeypatch.setattr(data_mod, "_load_augment_provider", lambda *a, **k: FailsOnce())
+    result = _run_augment(
+        tmp_path, monkeypatch, "--provider", "ollama", "--base-url", "http://127.0.0.1:9"
+    )
+
+    assert result.exit_code == 0, (result.output, repr(result.exception))
+    assert len(_augment_rows(tmp_path)) == 3  # 2 source rows + the one variant that succeeded
+    assert "[/oops]" in _terminal_text(result)
+
+
 # --------------------------------------------------------------------------- distill-prompt
 
 
@@ -361,3 +389,20 @@ def test_distill_preference_strategy_exercises_teacher_and_student(
     assert result.exit_code == 1, (output, repr(result.exception))
     assert not (tmp_path / "distilled.jsonl").exists()
     assert "2 of 4 provider calls failed" in output
+
+
+def test_distill_failure_summary_is_not_parsed_as_rich_markup(tmp_path, monkeypatch) -> None:
+    import soup_cli.utils.prompt_distill as distill_mod
+    from soup_cli.utils.data_forge import ProviderCallError
+
+    def boom(prompt: str):
+        raise ProviderCallError("upstream said [/oops]")
+
+    monkeypatch.setattr(distill_mod, "_build_provider_fn", lambda *a, **k: boom)
+    result = _run_distill(
+        tmp_path, monkeypatch, "--provider", "ollama", "--base-url", "http://127.0.0.1:9"
+    )
+
+    assert result.exit_code == 1, (result.output, repr(result.exception))
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert "[/oops]" in _terminal_text(result)
