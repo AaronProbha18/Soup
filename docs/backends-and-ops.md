@@ -365,6 +365,8 @@ writes that shape. This is a weights-only warm start — mlx-lm's LoRA trainer
 exposes no optimizer state or step count, so the resumed run starts counting
 from step 0 regardless of how far the checkpoint got.
 
+`task: unlearn` refuses `--resume` / `--hf-resume`, because it writes no checkpoints.
+
 
 ## Run Management & Cleanup
 

@@ -1917,7 +1917,7 @@ training:
   epochs: 1
 ```
 
-The gate is the only trainable parameter; it is saved as `mole_gate.pt` alongside the run.
+The gate is the only trainable parameter; it is saved as `mole_gate.pt` alongside the run, saved into every `checkpoint-N`, and restored by `--resume`.
 It trains as an fp32 master weight on every device, so its gradient and AdamW moments are
 fp32 too, even where the frozen base loads in bf16 (on CUDA), and `mole_gate.pt` is saved in
 fp32: a `Linear(hidden, N)` of `4 x hidden x N` bytes, about 7 KB for the example above and
