@@ -35,7 +35,8 @@ question, so a model that echoes the prompt cannot score.
 
 SmolLM2 solved 15 of the 24 kept rows and none of the 16 new ones.
 
-Qwen2.5-1.5B missed 8 rows:
+Qwen2.5-1.5B missed 8 rows. Row numbers are 0-based indices into
+`MINI_ARITHMETIC`; index 24 is the first new row (`47 x 38`).
 
 | Row | Kind | Failure |
 |---:|---|---|
