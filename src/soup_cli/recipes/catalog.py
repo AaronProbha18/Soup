@@ -31,7 +31,7 @@ def search_recipes(
     task: Optional[str] = None,
     size: Optional[str] = None,
 ) -> List[RecipeMeta]:
-    """Search recipes by keyword, task, or model size."""
+    """Search recipes by keyword, task, or model."""
     results = []
     for name, recipe in RECIPES.items():
         if task and recipe.task != task:
@@ -917,9 +917,9 @@ output: ./output
     "llama4-scout-17b-sft": RecipeMeta(
         model="meta-llama/Llama-4-Scout-17B-16E-Instruct",
         task="sft",
-        size="17B",
+        size="109B",
         tags=("llama", "llama4", "sft", "chat", "instruction"),
-        description="Llama 4 Scout 17B SFT with LoRA (4bit)",
+        description="Llama 4 Scout 17B active SFT with LoRA (4bit)",
         yaml_str="""\
 base: meta-llama/Llama-4-Scout-17B-16E-Instruct
 task: sft
@@ -945,9 +945,9 @@ output: ./output
     "llama4-scout-17b-dpo": RecipeMeta(
         model="meta-llama/Llama-4-Scout-17B-16E-Instruct",
         task="dpo",
-        size="17B",
+        size="109B",
         tags=("llama", "llama4", "dpo", "alignment", "preference"),
-        description="Llama 4 Scout 17B DPO alignment",
+        description="Llama 4 Scout 17B active DPO alignment",
         yaml_str="""\
 base: meta-llama/Llama-4-Scout-17B-16E-Instruct
 task: dpo
@@ -974,9 +974,9 @@ output: ./output
     "llama4-scout-17b-grpo": RecipeMeta(
         model="meta-llama/Llama-4-Scout-17B-16E-Instruct",
         task="grpo",
-        size="17B",
+        size="109B",
         tags=("llama", "llama4", "grpo", "reasoning"),
-        description="Llama 4 Scout 17B GRPO reasoning training",
+        description="Llama 4 Scout 17B active GRPO reasoning training",
         yaml_str="""\
 base: meta-llama/Llama-4-Scout-17B-16E-Instruct
 task: grpo
@@ -1153,7 +1153,7 @@ output: ./output
     "deepseek-v3-7b-sft": RecipeMeta(
         model="deepseek-ai/DeepSeek-V3-0324",
         task="sft",
-        size="7B",
+        size="685B",
         tags=("deepseek", "sft", "moe", "mixture-of-experts"),
         description="DeepSeek V3 SFT with MoE LoRA",
         yaml_str="""\
@@ -1302,9 +1302,9 @@ output: ./output
     "llama4-scout-tools": RecipeMeta(
         model="meta-llama/Llama-4-Scout-17B-16E-Instruct",
         task="sft",
-        size="17B",
+        size="109B",
         tags=("llama", "llama4", "sft", "tool-calling", "agentic", "function-calling"),
-        description="Llama 4 Scout 17B tool-calling / function-calling SFT",
+        description="Llama 4 Scout 17B active tool-calling / function-calling SFT",
         yaml_str="""\
 base: meta-llama/Llama-4-Scout-17B-16E-Instruct
 task: sft
@@ -2770,9 +2770,9 @@ output: ./output
     "glm-4.6-sft": RecipeMeta(
         model="zai-org/GLM-4.6",
         task="sft",
-        size="9B",
+        size="357B",
         tags=("glm", "zai-org", "chat", "instruction"),
-        description="GLM 4.6 instruction tuning with LoRA",
+        description="GLM 4.6 MoE instruction tuning with LoRA",
         yaml_str="""\
 base: zai-org/GLM-4.6
 task: sft
@@ -2798,9 +2798,9 @@ output: ./output
     "glm-5-sft": RecipeMeta(
         model="zai-org/GLM-5",
         task="sft",
-        size="9B",
+        size="754B",
         tags=("glm", "zai-org", "chat", "next-gen"),
-        description="GLM 5 SFT (next-gen GLM family)",
+        description="GLM 5 MoE SFT (next-gen GLM family)",
         yaml_str="""\
 base: zai-org/GLM-5
 task: sft
@@ -2889,9 +2889,9 @@ output: ./output
     "minimax-m2-sft": RecipeMeta(
         model="MiniMaxAI/MiniMax-M2",
         task="sft",
-        size="9B",
+        size="230B",
         tags=("minimax", "chat", "instruction"),
-        description="MiniMax M2 SFT instruction tuning",
+        description="MiniMax M2 MoE SFT instruction tuning",
         yaml_str="""\
 base: MiniMaxAI/MiniMax-M2
 task: sft
@@ -3305,7 +3305,7 @@ output: ./output
     "voxtral-sft": RecipeMeta(
         model="mistralai/Voxtral-Mini-3B-2507",
         task="sft",
-        size="3B",
+        size="4.7B",
         tags=("mistral", "voxtral", "audio", "multimodal"),
         description="Voxtral Mini 3B audio SFT",
         yaml_str="""\
