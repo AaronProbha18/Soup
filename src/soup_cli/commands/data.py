@@ -1690,7 +1690,7 @@ def augment_data(
     # Load provider
     try:
         provider_instance = _load_augment_provider(
-            provider, requests_per_minute, model=model, base_url=base_url,
+            provider, requests_per_minute, model=model, base_url=base_url
         )
     except (TypeError, ValueError, ImportError) as exc:
         console.print(f"[red]{exc}[/]")
@@ -1750,8 +1750,10 @@ def augment_data(
         )
 
     if not augmented and stats.failures:
+        from rich.markup import escape
+
         console.print(
-            f"[red]No usable rows produced:[/] {failure_summary}"
+            f"[red]No usable rows produced:[/] {escape(failure_summary)}"
         )
         raise typer.Exit(1)
 
@@ -1778,12 +1780,14 @@ def augment_data(
     written = atomic_write_text(payload, output_path, field="--output")
 
     if stats.failures:
+        from rich.markup import escape
+
         console.print(
             f"[yellow]Augmentation complete with provider failures:[/] "
             f"{len(data)} → {len(final_rows)} ({strategy} via {provider})\n"
             f"  Output: {written}"
         )
-        console.print(f"[yellow]Warning:[/] {failure_summary}")
+        console.print(f"[yellow]Warning:[/] {escape(failure_summary)}")
     else:
         console.print(
             f"[green]Augmentation complete:[/] {len(data)} → {len(final_rows)} "

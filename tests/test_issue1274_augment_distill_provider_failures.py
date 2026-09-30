@@ -4,7 +4,7 @@ provider calls into rows.
 Same defect class as #1221 (fixed for ``soup data forge`` in #1261): both
 commands built their LLM provider without ``raise_on_error=True``, so every
 transport/HTTP/malformed-response failure came back as ``{"text": ""}``.
-``augment`` wrote rows with the field left unrewritten... actually empty, and
+``augment`` wrote a row with the field rewritten to an empty string, and
 ``distill-prompt`` silently dropped every failed row — both reported success
 (exit 0) even when every call failed.
 """
@@ -126,7 +126,7 @@ def test_augment_unreachable_provider_exits_nonzero_no_file(tmp_path, monkeypatc
     )
     output = _terminal_text(result)
 
-    assert result.exit_code != 0, output
+    assert result.exit_code == 1, (output, repr(result.exception))
     assert not (tmp_path / "augmented.jsonl").exists()
     assert "of" in output and "provider calls failed" in output
     assert "--provider ollama (http://127.0.0.1:9)" in output
@@ -151,7 +151,7 @@ def test_augment_failing_provider_exits_nonzero(
     )
     output = _terminal_text(result)
 
-    assert result.exit_code != 0, output
+    assert result.exit_code == 1, (output, repr(result.exception))
     assert not (tmp_path / "augmented.jsonl").exists()
     assert first_error in output
 
@@ -192,6 +192,68 @@ def test_augment_healthy_provider_control(tmp_path, monkeypatch, stub_judge) -> 
     assert "Augmentation complete:" in output
 
 
+@pytest.mark.parametrize(
+    ("strategy", "strategy_args"),
+    [("translate", ["--lang", "es"]), ("style", ["--styles", "formal"])],
+)
+def test_augment_translate_and_style_fail_loudly_too(
+    tmp_path, monkeypatch, stub_judge, strategy: str, strategy_args: list
+) -> None:
+    stub, url = stub_judge
+    stub.mode = "500"
+    result = _run_augment(
+        tmp_path, monkeypatch,
+        "--strategy", strategy, *strategy_args,
+        "--provider", "ollama", "--base-url", url,
+    )
+    output = _terminal_text(result)
+
+    assert result.exit_code == 1, (output, repr(result.exception))
+    assert not (tmp_path / "augmented.jsonl").exists()
+    assert "provider returned HTTP 500" in output
+
+
+@pytest.mark.parametrize(
+    ("strategy", "strategy_args"),
+    [("translate", ["--lang", "es"]), ("style", ["--styles", "formal"])],
+)
+def test_augment_translate_and_style_partial_outage_keeps_only_good_rows(
+    tmp_path, monkeypatch, stub_judge, strategy: str, strategy_args: list
+) -> None:
+    stub, url = stub_judge
+    stub.mode = "alternate"
+    result = _run_augment(
+        tmp_path, monkeypatch,
+        "--strategy", strategy, *strategy_args,
+        "--provider", "ollama", "--base-url", url,
+    )
+    output = _terminal_text(result)
+
+    assert result.exit_code == 0, (output, repr(result.exception))
+    rows = _augment_rows(tmp_path)
+    assert len(rows) == 3  # 2 source rows + the one variant whose call succeeded
+    assert all(row["text"] for row in rows)
+    assert "1 of 2 provider calls failed" in output
+
+
+def test_augment_failure_summary_is_not_parsed_as_rich_markup(tmp_path, monkeypatch) -> None:
+    import soup_cli.commands.data as data_mod
+    from soup_cli.utils.data_forge import ProviderCallError
+
+    class Boom:
+        def generate(self, prompt: str, max_tokens: int = 512) -> str:
+            raise ProviderCallError("upstream said [/oops]")
+
+    monkeypatch.setattr(data_mod, "_load_augment_provider", lambda *a, **k: Boom())
+    result = _run_augment(
+        tmp_path, monkeypatch, "--provider", "ollama", "--base-url", "http://127.0.0.1:9"
+    )
+
+    assert result.exit_code == 1, (result.output, repr(result.exception))
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert "[/oops]" in _terminal_text(result)
+
+
 # --------------------------------------------------------------------------- distill-prompt
 
 
@@ -227,7 +289,7 @@ def test_distill_unreachable_provider_exits_nonzero_no_file(tmp_path, monkeypatc
     )
     output = _terminal_text(result)
 
-    assert result.exit_code != 0, output
+    assert result.exit_code == 1, (output, repr(result.exception))
     assert not (tmp_path / "distilled.jsonl").exists()
     assert "No usable rows produced" in output
     assert "2 of 2 provider calls failed" in output
@@ -242,7 +304,7 @@ def test_distill_failing_provider_exits_nonzero(tmp_path, monkeypatch, stub_judg
     )
     output = _terminal_text(result)
 
-    assert result.exit_code != 0, output
+    assert result.exit_code == 1, (output, repr(result.exception))
     assert not (tmp_path / "distilled.jsonl").exists()
     assert "provider returned HTTP 500" in output
 
@@ -296,6 +358,6 @@ def test_distill_preference_strategy_exercises_teacher_and_student(
     # alternate: call 1 ok (teacher q1), call 2 fails (student q1),
     # call 3 ok (teacher q2), call 4 fails (student q2) -> both rows drop
     # for lack of a student reply, even though only the student calls failed.
-    assert result.exit_code != 0, output
+    assert result.exit_code == 1, (output, repr(result.exception))
     assert not (tmp_path / "distilled.jsonl").exists()
     assert "2 of 4 provider calls failed" in output
