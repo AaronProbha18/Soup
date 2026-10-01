@@ -663,6 +663,13 @@ Or use `.txt` files directly (one document per line).
 
 With `embedding_loss: contrastive` (the default), each row's negatives are the other rows' positives in the same batch, so a batch needs at least two rows: `batch_size: 1` is refused at config load, `batch_size: auto` resolves to at least 2, and the last partial batch of each epoch is dropped. This also applies when `triplet` falls back to contrastive because the rows have no `negative`. Use `triplet` with a `negative` on every row, or `cosine`, to train at batch size 1.
 
+**Cross-Encoder (paired sequence classification - `data.format: cross_encoder`):**
+```json
+{"text_a": "What is Python?", "text_b": "Python is a programming language.", "label": 1}
+{"question": "What is Python?", "answer": "Python is a programming language.", "label": 1}
+```
+Reads paired text columns (`text_a`/`text_b` or `question`/`answer`) carrying a `label` field. Gated strictly to `task: cross_encoder` (`format: auto` resolves to `cross_encoder` for this task) to preserve global format detection for other tasks.
+
 **Audio (speech + conversation):**
 ```json
 {"audio": "recording.wav", "messages": [{"role": "user", "content": "Transcribe."}, {"role": "assistant", "content": "Hello world."}]}

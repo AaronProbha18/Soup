@@ -7,7 +7,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
 from rich.console import Console
@@ -15,8 +15,13 @@ from rich.markup import escape as markup_escape
 from rich.panel import Panel
 
 from soup_cli.config.loader import load_config
-from soup_cli.data.loader import load_dataset
+from soup_cli.data.loader import (
+    data_config_for_task,
+    load_dataset,
+    task_preserves_source_columns,
+)
 from soup_cli.monitoring.display import TrainingDisplay
+from soup_cli.trainer.classifier import CLASSIFICATION_TASKS
 from soup_cli.utils.gpu import detect_device, get_gpu_info, resolve_quantization
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only, no runtime import
@@ -108,6 +113,22 @@ def _train_sample_count(dcfg, dataset) -> int:
     return count if valid else rows
 
 
+def _validate_classification_dataset_if_applicable(cfg: Any, dataset: dict) -> None:
+    """Validate sequence classification rows upfront if task is in CLASSIFICATION_TASKS."""
+    if cfg.task in CLASSIFICATION_TASKS:
+        from rich.markup import escape
+
+        from soup_cli.trainer.classifier import validate_classification_dataset
+
+        try:
+            validate_classification_dataset(cfg, dataset)
+        except (ValueError, TypeError) as exc:
+            console.print(
+                f"[red]Error validating {cfg.task} dataset:[/] {escape(str(exc))}"
+            )
+            raise typer.Exit(1) from exc
+
+
 def _refuse_empty_train(dcfg, dataset) -> None:
     """Stop a run whose data loaded zero training rows (#1217).
 
@@ -177,7 +198,7 @@ def _build_hardware_fit_input(cfg):
     if quant == "4bit":
         peft = "qlora"
     elif task == "prm" or (
-        task in ("classifier", "reranker", "cross_encoder")
+        task in CLASSIFICATION_TASKS
         and not (tcfg.classifier_lora and tcfg.lora.r > 0)
     ) or (task == "asr" and not (tcfg.asr_lora and tcfg.lora.r > 0)):
         # #795: these trainers decide full fine-tuning themselves -- PRM always,
@@ -1294,8 +1315,7 @@ def train(
 
     # v0.53.2 review-fix: classifier-family tasks train a sequence-classification
     # head, not a causal-LM LoRA — render "head" instead of LoRA r/alpha.
-    classifier_family = ("classifier", "reranker", "cross_encoder")
-    if cfg.task in classifier_family:
+    if cfg.task in CLASSIFICATION_TASKS:
         # v0.71.12 #146 — render BOTH the head line AND a LoRA line when the
         # opt-in classifier LoRA path is active.
         head_line = (
@@ -1519,10 +1539,11 @@ def train(
         if val_notice:
             console.print(f"[yellow]Note:[/] {val_notice}")
         dataset = load_dataset(
-            run_data_config,
-            preserve_source_columns=cfg.task == "grpo",
+            data_config_for_task(run_data_config, cfg.task),
+            preserve_source_columns=task_preserves_source_columns(cfg.task),
         )
         _refuse_empty_train(cfg.data, dataset)
+        _validate_classification_dataset_if_applicable(cfg, dataset)
         console.print(
             f"[green]Data OK:[/] {_train_sample_count(cfg.data, dataset)} train samples"
         )
@@ -1536,10 +1557,11 @@ def train(
     if val_notice:
         console.print(f"[yellow]Note:[/] {val_notice}")
     dataset = load_dataset(
-        run_data_config,
-        preserve_source_columns=cfg.task == "grpo",
+        data_config_for_task(run_data_config, cfg.task),
+        preserve_source_columns=task_preserves_source_columns(cfg.task),
     )
     _refuse_empty_train(cfg.data, dataset)
+    _validate_classification_dataset_if_applicable(cfg, dataset)
     console.print(
         f"[green]Loaded:[/] {_train_sample_count(cfg.data, dataset)} train samples"
     )

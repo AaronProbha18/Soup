@@ -395,6 +395,8 @@ class DataConfig(BaseModel):
         "raft",
         # v0.71.32 — ASR (Whisper): rows are {"audio": path, "text": transcript}
         "asr",
+        # Issue #1219 — Cross-encoder paired sequence classification
+        "cross_encoder",
     ] = Field(
         default="auto",
         description="Data format",
@@ -4875,7 +4877,7 @@ class SoupConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_expand_layers_scope(self) -> "SoupConfig":
-        """#1325 — ``training.expand_layers`` (LLaMA Pro) is wired only in the
+        """#1325 - ``training.expand_layers`` (LLaMA Pro) is wired only in the
         transformers text SFT/pretrain ``_setup_transformers`` paths. Every
         other task/backend/modality accepts the fields and then silently
         trains the unexpanded model, so refuse at load with the actual
@@ -5567,6 +5569,16 @@ class SoupConfig(BaseModel):
             raise ValueError(
                 "training.classifier_lora requires task in "
                 "(classifier, reranker, cross_encoder); "
+                f"got task={self.task!r}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_cross_encoder_format(self) -> "SoupConfig":
+        """#1219 - only the cross_encoder trainer reads pair rows."""
+        if self.data.format == "cross_encoder" and self.task != "cross_encoder":
+            raise ValueError(
+                "data.format='cross_encoder' requires task='cross_encoder'; "
                 f"got task={self.task!r}"
             )
         return self
