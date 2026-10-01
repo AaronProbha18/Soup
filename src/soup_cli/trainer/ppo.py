@@ -71,6 +71,45 @@ def _effective_ppo_setting(
     return getattr(config, field, kwargs[field])
 
 
+def _unsupported_rl_flags(tcfg) -> list[str]:
+    """The RL-signal flags PPO cannot feed on the experimental trl API (#1441)."""
+    flags = []
+    if getattr(tcfg, "reward_hack_detector", None) is not None:
+        flags.append("reward_hack_detector")
+    if getattr(tcfg, "echo_trap_enabled", False):
+        flags.append("echo_trap_enabled")
+    if getattr(tcfg, "reward_hack_mitigation", "off") != "off":
+        flags.append("reward_hack_mitigation")
+    return flags
+
+
+def refuse_unfed_rl_flags(tcfg, *, is_experimental: bool) -> None:
+    """Refuse RL-signal flags PPO cannot feed, before anything is loaded.
+
+    #1441: the experimental ``PPOTrainer`` takes no ``reward_funcs`` — its
+    reward comes from the reward model it calls internally — so the wrappers
+    built at :282-299 were dropped on the floor. The buffer was still created,
+    and because the buffer object existed, the detector's ``on_log`` fallback
+    returned early, so nothing was ever written *and* nothing was ever read from
+    trl's logs. A run with a detector, a mitigation mode or the echo trap was
+    announced, loaded and inert.
+
+    Refusing beats a dead callback: the run stops before the model load, and the
+    message names every flag that was set.
+    """
+    if not is_experimental:
+        return
+    flags = _unsupported_rl_flags(tcfg)
+    if not flags:
+        return
+    raise ValueError(
+        f"task: ppo cannot use {', '.join(flags)}: this trl's experimental "
+        "PPOTrainer takes no reward functions, so the reward/completion signal "
+        "these callbacks read is never captured. They are wired on GRPO only. "
+        "Remove the flag(s), or run task: grpo where the signal buffer is fed."
+    )
+
+
 class PPOTrainerWrapper:
     """High-level wrapper for PPO training from SoupConfig.
 
@@ -120,8 +159,6 @@ class PPOTrainerWrapper:
 
     def setup(self, dataset: dict):
         """Load model, tokenizer, reward model/fn, apply LoRA, create PPO trainer."""
-        from datasets import Dataset
-
         # Import PPOTrainer/PPOConfig — trl >=0.28 moved to trl.experimental
         ppo_trainer_cls, ppo_config_cls, is_experimental = _import_ppo_classes()
 
@@ -132,6 +169,15 @@ class PPOTrainerWrapper:
 
         cfg = self.config
         tcfg = cfg.training
+
+        # #1441 — refuse before anything is loaded, including `datasets` and the
+        # model. These callbacks read a signal buffer the experimental
+        # PPOTrainer leaves empty, so a run with them is announced and inert.
+        refuse_unfed_rl_flags(tcfg, is_experimental=is_experimental)
+
+        # Deferred below the refusal: a config that cannot run at all should say
+        # which flag stopped it, not fail on an unrelated import first.
+        from datasets import Dataset
 
         # #353: seed before the model and any adapter are built.
         apply_training_seed(tcfg)
