@@ -539,20 +539,50 @@ Harvest DPO / KTO-ready preference pairs from your production inference logs —
 soup data from-traces --logs ./logs/langchain.jsonl \
   --format langchain --signal thumbs_up --output prefs.jsonl
 
-# OpenAI API logs + regeneration signal (second response wins)
+# OpenAI API logs + regeneration signal (last response wins). The signal is
+# `regenerations`; `regeneration` is refused by the CLI (#1440).
 soup data from-traces --logs ./logs/openai.jsonl \
-  --format openai --signal regeneration --output prefs.jsonl
+  --format openai --signal regenerations --output prefs.jsonl
 
-# Soup-serve logs + user-edit signal (edited response wins over original)
-soup data from-traces --logs ./logs/soup-serve.jsonl \
-  --format soup_serve --signal user_edit --output prefs.jsonl
+# Soup-serve logs + user-edit signal (edited response wins over original).
+# `--logs` is a DIRECTORY of *.jsonl: the soup-serve parser reads a directory,
+# and returns nothing for a single file (#1440).
+soup data from-traces --logs ./traces \
+  --format soup-serve --signal user_edit --output prefs.jsonl
 
 # Preview generated pairs before training
 soup data review prefs.jsonl --sample 10
 ```
 
-**Supported log formats:** `langchain`, `openai`, `soup_serve`
-**Supported signals:** `thumbs_up` (rating-based), `regeneration` (latest wins), `user_edit` (edited wins)
+**Supported log formats:** `langchain`, `openai`, `soup-serve`
+**Supported signals:** `thumbs_up` (rating-based), `regenerations` (latest wins), `user_edit` (edited wins)
+
+**The `soup-serve` record shape.** The parser reads a top-level `signal` in the
+canonical vocabulary, falling back to a nested `feedback.rating` (`up` / `down`)
+for older logs:
+
+```json
+{"prompt": "Q", "output": "Good", "signal": "thumbs_up"}
+{"prompt": "Q", "output": "Bad",  "signal": "thumbs_down"}
+{"prompt": "Q", "output": "Raw",  "signal": "user_edit", "edited_output": "Polished"}
+```
+
+Who writes what:
+
+- `soup ingest` is a producer. It writes `thumbs_up`, `thumbs_down` or `none`, under
+  the field name `trace_id` rather than `id`, so its output feeds this command
+  directly.
+- `user_edit` and `regenerated` rows come from **your own** pipeline. `signal:
+  user_edit` has to accompany the edit field: a record with `edited_output` but no
+  `signal` reads as "no trace carried a signal". The edit itself is read from
+  `edited_output`, `edited_response`, or a nested `feedback.edited_output`.
+- `soup serve --trace-log` records carry **no signal yet** (`ts`, `prompt`,
+  `response`, `latency_ms`, `tokens`), so a harvest of that directory reports the
+  diagnostic below rather than a silent 0.
+
+When traces are read but none pair, the command prints how many it read, which
+signal it wanted and which signals were present, instead of reporting a normal
+write of 0 pairs.
 
 Trace files are capped at 100,000 lines to prevent OOM on production logs. A PII warning panel appears on every run — redact sensitive fields before harvesting.
 
