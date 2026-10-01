@@ -526,6 +526,8 @@ soup data augment ./data/train.jsonl --strategy rephrase --count 2 \
 
 Works with any provider supported by `soup data generate` (OpenAI, Ollama, vLLM, local server). `--model` and `--base-url` select a specific local model/endpoint; the Ollama/vLLM paths are loopback-only (SSRF-hardened). `--count` is capped at 10; `--lang` and `--styles` each capped at 10 entries × 32 chars.
 
+A provider call that fails (transport error, non-200 status, malformed response) or returns an empty reply never becomes a row: that variant is dropped. The summary reports `N of M provider calls failed` with the first error, and the command exits 1 without writing the output file when no call produced a usable row.
+
 
 ## Trace-to-Preference
 

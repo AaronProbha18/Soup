@@ -1725,6 +1725,10 @@ def augment_data(
         console.print(f"[red]{exc}[/]")
         raise typer.Exit(2) from exc
 
+    from soup_cli.utils.data_forge import ForgeJudgeStats
+
+    stats = ForgeJudgeStats()
+
     max_entries = 10
     max_entry_len = 32
 
@@ -1748,17 +1752,38 @@ def augment_data(
             target_langs = _bounded_list(lang, "lang")
             augmented = augment_fn(
                 data, provider=provider_instance,
-                languages=target_langs or None,
+                languages=target_langs or None, stats=stats,
             )
         elif strategy == "style":
             target_styles = _bounded_list(styles, "styles")
             augmented = augment_fn(
                 data, provider=provider_instance, styles=target_styles or None,
+                stats=stats,
             )
         else:
-            augmented = augment_fn(data, provider=provider_instance, count=count)
+            augmented = augment_fn(
+                data, provider=provider_instance, count=count, stats=stats,
+            )
     except ValueError as exc:
         console.print(f"[red]{exc}[/]")
+        raise typer.Exit(1)
+
+    failure_summary = ""
+    if stats.failures:
+        from soup_cli.utils.recipe_run import _provider_endpoint_label
+
+        endpoint = _provider_endpoint_label(provider, base_url or None)
+        failure_summary = (
+            f"{stats.failures} of {stats.calls} provider calls failed for "
+            f"--provider {provider} ({endpoint}); first error: {stats.first_error}"
+        )
+
+    if not augmented and stats.failures:
+        from rich.markup import escape
+
+        console.print(
+            f"[red]No usable rows produced:[/] {escape(failure_summary)}"
+        )
         raise typer.Exit(1)
 
     # Optional dedup
@@ -1783,11 +1808,21 @@ def augment_data(
     )
     written = atomic_write_text(payload, output_path, field="--output")
 
-    console.print(
-        f"[green]Augmentation complete:[/] {len(data)} → {len(final_rows)} "
-        f"({strategy} via {provider})\n"
-        f"  Output: {written}"
-    )
+    if stats.failures:
+        from rich.markup import escape
+
+        console.print(
+            f"[yellow]Augmentation complete with provider failures:[/] "
+            f"{len(data)} → {len(final_rows)} ({strategy} via {provider})\n"
+            f"  Output: {written}"
+        )
+        console.print(f"[yellow]Warning:[/] {escape(failure_summary)}")
+    else:
+        console.print(
+            f"[green]Augmentation complete:[/] {len(data)} → {len(final_rows)} "
+            f"({strategy} via {provider})\n"
+            f"  Output: {written}"
+        )
 
 
 class _AugmentProvider:
@@ -1841,6 +1876,7 @@ def _load_augment_provider(
         canonical,
         model=model or _AUGMENT_DEFAULT_MODELS[canonical],
         base_url=base_url or None,
+        raise_on_error=True,
     )
     return _AugmentProvider(fn)
 
