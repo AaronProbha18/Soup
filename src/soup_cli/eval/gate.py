@@ -95,7 +95,15 @@ class GateTask(BaseModel):
         # Allowlist of schemes — SSRF hardening consistent with the project.
         parsed = urlparse(value)
 
-        if parsed.scheme in ("ollama","https"):
+        if parsed.scheme == "ollama":
+            return value
+
+        if parsed.scheme == "https":
+            # A private IP literal is refused when the suite is parsed, so a
+            # suite file cannot name one any more than --judge-model can.
+            from soup_cli.utils.net_guard import refuse_private_ip_literal
+
+            refuse_private_ip_literal(parsed.hostname, label="judge_model URL")
             return value
 
         if (parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1"}):

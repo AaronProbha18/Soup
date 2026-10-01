@@ -905,7 +905,9 @@ The judge is Soup's own OpenAI-compatible `JudgeEvaluator` adapted to TRL's
 B,A orders agree). Recipe: `online-dpo-smollm2-135m`. Proof-of-mechanism was
 validated on SmolLM2-135M with a synthetic judge (not a production RLHF claim; #286).
 An `https://` judge URL uses `OPENAI_API_KEY` only when its host is `api.openai.com`; other
-hosts are called as an OpenAI-compatible server without that key.
+hosts are called as an OpenAI-compatible server without that key. An `online_dpo_judge` whose
+host is a private, link-local or reserved IP literal is refused when soup.yaml loads (loopback
+stays allowed); address an internal judge by its hostname.
 
 A pair the judge cannot rank is left out of the loss: a tie, a failed or unreadable judge
 call, or a verdict that changes when the two completions are swapped. Such a pair adds no

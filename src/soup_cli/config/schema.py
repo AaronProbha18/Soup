@@ -1546,7 +1546,12 @@ class TrainingConfig(BaseModel):
     @field_validator("online_dpo_judge", mode="before")
     @classmethod
     def _validate_online_dpo_judge_field(cls, value: Any) -> Optional[str]:
-        """v0.71.31 — shape-only validation (SSRF enforced at trainer setup)."""
+        """v0.71.31 — shape validation; the full SSRF policy runs at trainer setup.
+
+        A private / link-local / reserved IP literal in an http(s) judge URL is
+        refused here as well, so a shared soup.yaml naming one fails at load
+        instead of after the model download.
+        """
         if value is None:
             return None
         if isinstance(value, bool) or not isinstance(value, str):
@@ -1559,6 +1564,16 @@ class TrainingConfig(BaseModel):
             raise ValueError("online_dpo_judge must not contain null bytes")
         if len(value) > 512:
             raise ValueError("online_dpo_judge must be <= 512 chars")
+        from urllib.parse import urlparse
+
+        from soup_cli.utils.net_guard import refuse_private_ip_literal
+
+        try:
+            parsed = urlparse(value)
+        except ValueError as exc:
+            raise ValueError("online_dpo_judge is not a valid URL") from exc
+        if parsed.scheme in ("http", "https"):
+            refuse_private_ip_literal(parsed.hostname, label="online_dpo_judge")
         return value
 
     # v0.71.32 — ASR (Whisper) fine-tuning knobs.
