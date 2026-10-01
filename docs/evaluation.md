@@ -319,7 +319,7 @@ Default threshold 0.2 matches v0.43.0 KL-delta quant-check thresholds. Webhooks 
 
 ## Diagnose (Post-Training Report Card)
 
-`soup diagnose` scores seven independent failure modes for a trained adapter and renders an OK / MINOR / MAJOR verdict per mode plus an overall headline — same taxonomy as Quant-Lobotomy. Useful for catching adapter regressions that a loss curve cannot distinguish from a healthy run.
+`soup diagnose` scores seven independent failure modes for a trained adapter and renders an OK / MINOR / MAJOR / NOT_RUN verdict per mode (see `NOT_RUN` below) plus an overall headline — same taxonomy as Quant-Lobotomy. Useful for catching adapter regressions that a loss curve cannot distinguish from a healthy run.
 
 ```bash
 # Neutral report (no model load — runs as a sanity check)
@@ -339,6 +339,9 @@ soup diagnose my-run-id --evidence evidence.json --output diag.json
 
 # Twitter-shareable SVG badge embeddable in a model card
 soup diagnose my-run-id --badge diag.svg
+
+# Live run that knowingly skips probes: keep exit 0 instead of 3 on NOT_RUN
+soup diagnose my-run-id --base-model HuggingFaceTB/SmolLM2-135M --allow-not-run
 
 # Attach the report to a Model Registry entry as a first-class artifact
 soup diagnose my-run-id --output diag.json --attach-to-registry abc123
@@ -362,9 +365,11 @@ a built-in probe set; `format` only fires when the dataset's own targets look li
 | `contamination` | Training data overlapping public benchmarks | 1 − contamination_rate |
 | `citation` | RAFT model stopped citing the supporting `[doc-N]` (v0.71.10) | fraction of answers citing the golden doc |
 
-**Verdict pill colours:** OK (≥ 0.85) green / MINOR (≥ 0.60) amber / MAJOR (< 0.60) red. `soup diagnose` exits 2 when the overall verdict is MAJOR — wire into CI to fail the build on regression.
+**Verdict pill colours:** OK (≥ 0.85) green / MINOR (≥ 0.60) amber / MAJOR (< 0.60) red. `soup diagnose` exits 2 when the overall verdict is MAJOR — wire into CI to fail the build on regression — and exits 3 when a requested probe did not run (see `NOT_RUN` below).
 
-**Post-training gate:** `soup train --diagnose-gate <evidence.json>` runs the same scorer after training finishes and refuses to mark the run successful when any mode comes back MAJOR. Composes with `--gate <eval-suite>` (v0.26) — the eval gate catches accuracy regressions vs a baseline; the diagnose gate catches behaviour regressions the eval suite is blind to.
+**`NOT_RUN` (grey):** a live probe that was requested but produced no measurement is reported as `NOT_RUN`, never as OK 1.00. That covers a `--dataset` with no usable prompt/answer rows and a probe that raised; the evidence column keeps the reason, including the exception text. `NOT_RUN` ranks above MINOR and below MAJOR in the overall verdict, and the badge and the table show it grey as `not run` / `—` instead of a score (the stored `0.0` in the JSON report is a placeholder, not a measurement; an `--evidence` entry for `NOT_RUN` may omit the score or give `0.0`). `soup diagnose` exits 3 when the overall verdict is `NOT_RUN`; pass `--allow-not-run` to keep exit 0 for runs that knowingly skip probes. MAJOR still exits 2. Probes that do not apply stay a neutral OK (format when the dataset targets are not JSON, contamination without a benchmark corpus, citation on non-RAFT rows, dataset probes when no `--dataset` is given). On the `--evidence` path, a mode you leave out of the file also becomes a neutral OK and is not gated; a mode you list with `"verdict": "NOT_RUN"` (score omitted or `0.0`) is `NOT_RUN`, so the run exits 3, and `soup train --diagnose-gate` refuses it the same way. A bad `--tokenizer` is an input error (exit 3) raised before any model loads. For `--dataset`, the live probes currently read rows with a prompt key (`prompt`, `instruction`, `input`, `question` or `query`) plus an answer key (`response`, `completion`, `output`, `answer`, `chosen` or `text`), or a `messages` list; other shapes (ShareGPT `conversations`, LLaVA, plaintext) make the dataset probes `NOT_RUN`. Memorization additionally needs a `text`, `content`, `prompt`, `instruction` or `messages` field, and is `NOT_RUN` when none of the first rows has one.
+
+**Post-training gate:** `soup train --diagnose-gate <evidence.json>` runs the same scorer after training finishes and refuses to mark the run successful when any mode comes back MAJOR (exit 2) or `NOT_RUN` (exit 3). Composes with `--gate <eval-suite>` (v0.26) — the eval gate catches accuracy regressions vs a baseline; the diagnose gate catches behaviour regressions the eval suite is blind to.
 
 
 ## Ship Verdict (`soup ship`)
