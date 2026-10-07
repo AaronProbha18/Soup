@@ -182,9 +182,15 @@ fingerprint route because code loaded from elsewhere would not be covered.
 Local tokenizers declaring `fast_tokenizer_files` are also refused because
 their versioned tokenizer JSON files are not covered by this fingerprint.
 
+To continue training from a local QuEST artifact, set `base` to its directory
+and keep `training.quantization_aware: quest`. Soup restores the artifact's
+clipping table and route instead of recalibrating on the new training rows.
+The sidecar must match the declaration in `config.json`; missing or inconsistent
+metadata is refused. This preserves the inherited metadata format and provenance.
+
 Format-v1 sidecars remain readable. Since they did not record a content hash,
-their first resume still compares the original base path string; a successful
-resume writes v2 metadata for subsequent checkpoints. A v1 artifact cannot
+resuming from the original base still compares its path string; that route
+writes v2 metadata for subsequent checkpoints. A v1 artifact cannot
 prove that a relocated base is the same one, and existing v1 sidecars may
 already disclose the old local path.
 Because generic Transformers cannot infer fake-quant execution from the master
@@ -208,6 +214,14 @@ measured a 0.086344 nat/target gap to fixed FP, with a paired 95% interval of
 - not evidence of mixed-route training quality or cross-model generality;
 - not upstream QuEST numerical parity;
 - not packed INT4, and not a speed or memory-efficiency claim.
+
+The [post-fit development record](../benchmarks/quest-674-postfit-development-results.md)
+preserves a selected research continuation with a Q/strongest-FP response-NLL
+ratio of 1.038367 and paired gap of +0.078519 nat/target on the same, now
+selection-spent, 704-row panel. It uses a research CE/KL adapter around native
+SFT; this objective is not exposed as a public QuEST CLI recipe. The gap's paired
+95% interval remains above zero, so `training_quality_validated` stays false.
+The record also retains unsuccessful follow-ups and checkpoint hash bindings.
 
 The implementation keeps FP32 masters. The Hadamard and fake-quant grid arithmetic
 run under the trainer's CUDA autocast: BF16 by default on the Ampere-or-newer GPUs
