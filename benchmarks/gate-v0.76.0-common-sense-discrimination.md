@@ -76,6 +76,10 @@ Qwen2.5-1.5B missed 6 rows. Row numbers are 0-based indices into
 Row 15 is the same original-row miss the arithmetic record measured. Qwen
 answered all four re-lettered rows correctly; SmolLM2 answered two of them.
 SmolLM2 scored 7/24 on the original rows and 4/16 on the new ones.
+That is chance level, not a skill level: uniform guessing over 24 three-option
+and 16 four-option rows expects 12/40 = 0.300, and a constant "A" or "B" scores
+0.275, exactly SmolLM2's score. The weak reference was at chance on the old
+fixture too (5/24 against 8/24 expected).
 
 ## Bundled-suite check
 

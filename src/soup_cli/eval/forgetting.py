@@ -261,7 +261,7 @@ MINI_COMMON_SENSE: MiniBenchmark = [
      "answer": "A"},
     {"question": "Rain falls from the: (A) ground (B) clouds (C) ocean floor", "answer": "B"},
     # #1192 — the 24 rows above put a capable model at 1.000 (Qwen2.5-7B-Instruct,
-    # 24/24 in gate-v0.76.0-tool-call-discrimination.md). The rows below are
+    # 24/24 in the #1111 tool-call discrimination record). The rows below are
     # 4-option physical, temporal and relational reasoning, measured as a
     # candidate pool on two models before selection. Four rows above had their
     # B and C options swapped so no one letter answers more than 30% of the suite.
