@@ -120,10 +120,16 @@ assert the gap still clears 0.05.
 
 ## Baseline provenance
 
-`BUNDLED_SCORER_REVISION` moves from 5 to 6 so a baseline stamped at revision 5
-warns rather than being compared on the old scale. The deterministic
-fingerprint does not move: its corpus fixes each row's correctness by index
-parity, and 20/40 scores the same as 13/26.
+`BUNDLED_SCORER_REVISION` moves from 6 to 7 so a baseline stamped at revision 6
+warns rather than being compared on the old scale. (Revision 6 is #1958, which
+made a failed generation fail every suite; it landed while this change was in
+progress.) The deterministic fingerprint does not move: its corpus fixes each
+row's correctness by index parity, and 20/40 scores the same as 13/26.
+
+These runs predate #1958, which also lets `soup ship` batch greedy generation.
+They generated one prompt at a time, and no generation failed, so the
+revision-6 rule would not have changed any score here. Whether batched greedy
+decoding reproduces these outputs exactly on MPS was not measured.
 
 ## What this record does not establish
 
