@@ -43,7 +43,8 @@ class TestEveryRowCarriesAShape:
 
 class TestShapeNotJustContainer:
     def test_one_fixed_object_for_every_prompt_no_longer_scores(self):
-        assert score_bundled_suite("mini_format_json", lambda _p: '{"ok": true}') < 0.1
+        # Only "exactly one key 'ok'" accepts it; a weakened row moves this.
+        assert score_bundled_suite("mini_format_json", lambda _p: '{"ok": true}') == 1 / 40
 
     def test_prose_and_bare_scalars_still_score_zero(self):
         assert score_bundled_suite("mini_format_json", lambda _p: "sorry, no") == 0.0
@@ -71,6 +72,33 @@ class TestShapeNotJustContainer:
              '{"items": [1]}', '{"items": []}'),
             ("Return a JSON object with a null 'middle_name' field",
              '{"middle_name": ""}', '{"middle_name": null}'),
+            # Constraints no earlier pair contradicted: string type, array len,
+            # item type, and the one-key limit of the unwrap.
+            ("Respond with valid JSON containing a 'message' string",
+             '{"message": 5}', '{"message": "hi"}'),
+            ("Respond with a JSON list of three fruit names",
+             '["apple", "pear"]', '["apple", "pear", "fig"]'),
+            ("Respond with a JSON list of three fruit names",
+             "[1, 2, 3]", '["apple", "pear", "fig"]'),
+            ("Respond with JSON containing an array of two integers", "[1]", "[1, 2]"),
+            ("Give the result as JSON with keys 'sum' and 'count'",
+             '{"outer": {"sum": 1, "count": 2}, "note": "x"}', '{"sum": 1, "count": 2}'),
+            # JSON booleans are not 0 and 1, in literals as in types.
+            ("Give me a JSON object with a 'count' set to zero",
+             '{"count": false}', '{"count": 0}'),
+            ("Give me a JSON array of the numbers 1, 2, and 3",
+             "[true, 2, 3]", "[1, 2, 3]"),
+            ("Output a JSON object mapping 'red' to 1 and 'blue' to 2",
+             '{"red": true, "blue": 2}', '{"red": 1, "blue": 2}'),
+            # Only object rows unwrap: a wrapper changes the type an array or
+            # literal row names.
+            ("Give me a JSON array of the numbers 1, 2, and 3",
+             '{"numbers": [1, 2, 3]}', "[1, 2, 3]"),
+            ("Respond with a JSON list of three fruit names",
+             '{"fruits": ["apple", "pear", "fig"]}', '["apple", "pear", "fig"]'),
+            ("Output a JSON array containing the strings 'a', 'b', 'c'",
+             '{"letters": ["a", "b", "c"]}', '["a", "b", "c"]'),
+            ("Respond with valid JSON: an empty object", '{"empty": {}}', "{}"),
         ],
     )
     def test_wrong_shape_fails_and_right_shape_passes(self, prompt_start, wrong, right):

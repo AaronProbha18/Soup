@@ -46,10 +46,17 @@ further:
 | "exactly one key", "a single 'day' key", "an empty object" | no other keys |
 | a literal array: "the numbers 1, 2, and 3" | that exact array |
 
-A non-`exact` shape is also tried against the value of a single-key wrapper,
-so `{"book": {"title": ..., "author": ...}}` passes "a book: title and author".
-Naming the thing asked for is packaging, not a wrong shape. A row without
-`expect` scores as before.
+A non-`exact` object shape is also tried against the value of a single-key
+wrapper, so `{"book": {"title": ..., "author": ...}}` passes "a book: title and
+author". Naming the thing asked for is packaging, not a wrong shape. Array and
+literal rows do not unwrap: `{"numbers": [1, 2, 3]}` is not "a JSON array of the
+numbers 1, 2, and 3". Literal values compare as JSON, so `false` is not `0` and
+`true` is not `1`. A row without `expect` scores as before.
+
+The object-only unwrap and the JSON equality were added in review, after these
+runs. Every Qwen output below was rechecked against them and none changes; the
+captured SmolLM2 outputs are truncated to their last 300 characters, so its
+score is unchanged as far as those captures show.
 
 ## Result
 
@@ -145,5 +152,10 @@ the shape check removed; a test pins that removing the check moves the hash.
 - That every reasonable answer to a prose-named prompt passes. Prose-named rows
   check only a key count for that reason; quoted keys, types and exact values
   are checked as written.
+- That the shape check is prompt-aware beyond what `expect` says. A prompt-blind
+  object holding the union of the requested keys with plausible values scores
+  about 0.7 (0.675 for the one built here), `{"a": 1, "b": 2, "c": 3}` scores
+  0.125, and row 14 checks four integers, not four even ones. No measured model
+  answered that way; the claim about a constant `{"ok": true}` (0.025) is exact.
 - The software versions of the run; they were not captured.
 - Anything about `mini_safety` or `mini_over_refusal`, which remain with #1192.

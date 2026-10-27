@@ -323,7 +323,8 @@ class TestBundledScorers:
         # #1192 — one fixed object for every prompt is valid JSON but not the
         # shape each row asks for, so it no longer scores 1.0.
         constant = score_bundled_suite("mini_format_json", lambda p: '{"ok": true}')
-        assert constant < 0.1
+        # Only "exactly one key 'ok'" accepts it; a weakened row moves this.
+        assert constant == 1 / 40
         broken = score_bundled_suite("mini_format_json", lambda p: "not json at all")
         assert broken == 0.0
         # A bare scalar is valid JSON but not the structured object asked for.

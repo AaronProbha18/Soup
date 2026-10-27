@@ -390,6 +390,22 @@ _JSON_TYPES = {
 }
 
 
+def _same_json(left: object, right: object) -> bool:
+    """JSON equality: ``true`` is not ``1`` and ``false`` is not ``0``.
+
+    Python's ``==`` treats ``True == 1``, so ``{"count": false}`` would pass
+    "a 'count' set to zero"; the ``type`` rules already refuse booleans as
+    numbers, and literal rows need the same.
+    """
+    if isinstance(left, bool) or isinstance(right, bool):
+        return isinstance(left, bool) and isinstance(right, bool) and left == right
+    if isinstance(left, list) and isinstance(right, list):
+        return len(left) == len(right) and all(_same_json(a, b) for a, b in zip(left, right))
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(_same_json(left[k], right[k]) for k in left)
+    return left == right
+
+
 def _matches_expect(value: object, spec: dict) -> bool:
     """True when ``value`` has the shape a ``mini_format_json`` row asks for (#1192).
 
@@ -399,7 +415,7 @@ def _matches_expect(value: object, spec: dict) -> bool:
     (sub-specs for every element / named key) and ``some_value`` (at least one
     value matches). An unknown ``type`` fails rather than passing.
     """
-    if "equals" in spec and value != spec["equals"]:
+    if "equals" in spec and not _same_json(value, spec["equals"]):
         return False
     if "type" in spec and not _JSON_TYPES[spec["type"]](value):
         return False
@@ -433,9 +449,11 @@ def _json_has_requested_shape(item: dict, output: str) -> bool:
     ``{"result": 3}`` to "keys 'sum' and 'count'" scored, and the suite sat at
     1.000 on every capable model. A row without ``expect`` scores as it did.
 
-    A non-``exact`` spec is also tried against the value of a single-key wrapper
-    (``{"book": {"title": ..., "author": ...}}``): naming the thing asked for is
-    a packaging choice, not a wrong shape.
+    A non-``exact`` object spec is also tried against the value of a single-key
+    wrapper (``{"book": {"title": ..., "author": ...}}``): naming the thing asked
+    for is a packaging choice, not a wrong shape. Only object specs unwrap; for a
+    row that asks for an array or a literal, a wrapper changes the top-level type
+    the prompt names (``{"numbers": [1, 2, 3]}`` is not "a JSON array").
     """
     parsed = _extract_json_container(output)
     if parsed is None:
@@ -445,7 +463,12 @@ def _json_has_requested_shape(item: dict, output: str) -> bool:
         return True
     if _matches_expect(parsed, spec):
         return True
-    if not spec.get("exact") and isinstance(parsed, dict) and len(parsed) == 1:
+    if (
+        not spec.get("exact")
+        and spec.get("type") == "object"
+        and isinstance(parsed, dict)
+        and len(parsed) == 1
+    ):
         return _matches_expect(next(iter(parsed.values())), spec)
     return False
 
